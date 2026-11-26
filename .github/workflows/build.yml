@@ -1,4 +1,4 @@
-name: Compilar Mod Pennywise 1.20.1 Forge
+name: Compilar Mod Pennywise 1.20.1 Forge V2
 
 on:
   push:
@@ -19,7 +19,7 @@ jobs:
         with:
           gradle-version: "8.7"
 
-      - name: Gerar projeto, modelos, animacoes e texturas
+      - name: Gerar projeto, modelo 3D HD, animacoes e texturas 256x256
         run: |
           python3 - << 'PYEOF'
           import os
@@ -84,12 +84,12 @@ jobs:
                   col[3],
               )
 
-          def paint_box(img, u, v, w, h, d, base_col, grain=10, seed=1):
+          def paint_box(img, u, v, w, h, d, base_col, grain=8, seed=1):
               rects = [
-                  (u + d, v, w, d, 8),
+                  (u + d, v, w, d, 10),
                   (u + d + w, v, w, d, -14),
                   (u, v + d, d, h, -6),
-                  (u + d, v + d, w, h, 2),
+                  (u + d, v + d, w, h, 3),
                   (u + d + w, v + d, d, h, -6),
                   (u + 2 * d + w, v + d, w, h, -10),
               ]
@@ -99,187 +99,292 @@ jobs:
                           nv = (noise_val(xx, yy, seed) % (grain * 2 + 1)) - grain
                           set_px(img, xx, yy, shade(base_col, bias + nv))
 
-          def add_blood_splatter(img, x, y, w, h, density=42, seed=77):
-              blood_dark = (112, 8, 12, 255)
-              blood_mid = (158, 14, 18, 255)
+          def paint_hair_box(img, u, v, w, h, d, seed=1):
+              base = (146, 26, 18, 255)
+              rects = [
+                  (u + d, v, w, d, 12),
+                  (u + d + w, v, w, d, -18),
+                  (u, v + d, d, h, -6),
+                  (u + d, v + d, w, h, 4),
+                  (u + d + w, v + d, d, h, -6),
+                  (u + 2 * d + w, v + d, w, h, -12),
+              ]
+              for rx, ry, rw, rh, bias in rects:
+                  for yy in range(ry, ry + rh):
+                      for xx in range(rx, rx + rw):
+                          strand = ((xx + (yy // 2)) % 3 == 0)
+                          nv = (noise_val(xx, yy, seed) % 34) - 17
+                          col = shade(base, bias + nv + (16 if strand else -8))
+                          set_px(img, xx, yy, col)
+
+          def paint_pleated_cloth(img, u, v, w, h, d, base_col, fold_col, red_trim=False, seed=1):
+              paint_box(img, u, v, w, h, d, base_col, grain=7, seed=seed)
+              # Vertical Victorian pleats around sides
+              total_w = 2 * (w + d)
+              for px in range(u, u + total_w, 3):
+                  fill_rect(img, px, v + d, 1, h, fold_col)
+              if red_trim:
+                  fill_rect(img, u, v + d + h - 1, total_w, 1, (162, 18, 22, 255))
+
+          def add_blood_splatter(img, x, y, w, h, density=55, seed=77):
+              blood_dark = (102, 6, 10, 255)
+              blood_mid = (154, 12, 16, 255)
+              blood_bright = (182, 20, 22, 255)
               for yy in range(y, y + h):
                   for xx in range(x, x + w):
                       nv = noise_val(xx, yy, seed)
                       if nv < density:
-                          set_px(img, xx, yy, blood_dark if (nv % 2 == 0) else blood_mid)
+                          if nv < density // 3:
+                              set_px(img, xx, yy, blood_dark)
+                          elif nv < (density * 4) // 5:
+                              set_px(img, xx, yy, blood_mid)
+                          else:
+                              set_px(img, xx, yy, blood_bright)
 
           def generate_pennywise_texture(path, bloody=False):
-              img = new_img(128, 128, (0, 0, 0, 0))
+              img = new_img(256, 256, (0, 0, 0, 0))
 
               skin = (238, 234, 226, 255)
-              suit = (224, 220, 212, 255)
-              suit_fold = (182, 176, 168, 255)
+              skin_shadow = (206, 198, 190, 255)
+              suit = (224, 220, 214, 255)
+              suit_bright = (238, 235, 230, 255)
+              suit_fold = (176, 170, 162, 255)
               red_makeup = (178, 16, 22, 255)
               red_dark = (118, 10, 14, 255)
-              hair_red = (152, 28, 18, 255)
-              pom_yellow = (236, 172, 28, 255)
-              mouth_dark = (46, 5, 8, 255)
-              tongue_col = (138, 22, 28, 255)
-              tooth_white = (244, 238, 220, 255)
-              shoe_dark = (44, 40, 44, 255)
-              blood_fresh = (142, 10, 14, 255)
-              blood_deep = (92, 5, 8, 255)
+              pom_gold = (236, 168, 24, 255)
+              mouth_abyss = (26, 3, 6, 255)
+              mouth_flesh = (98, 10, 14, 255)
+              tongue_col = (148, 24, 30, 255)
+              tooth_white = (244, 238, 222, 255)
+              boot_dark = (38, 34, 38, 255)
+              blood_fresh = (146, 10, 14, 255)
+              blood_deep = (88, 4, 8, 255)
 
-              # 1. upper_head (9x8x9) UV (0,0)
-              paint_box(img, 0, 0, 9, 8, 9, skin, grain=6, seed=11)
-              # Roof of mouth (bottom face of upper_head): x 18..27, y 0..9
-              fill_rect(img, 18, 0, 9, 9, mouth_dark)
-              # Front face of upper_head: x 9..18, y 9..17 (9x8)
-              fx, fy = 9, 9
-              # Forehead hairline & shadow
-              set_px(img, fx + 0, fy + 0, hair_red)
-              set_px(img, fx + 8, fy + 0, hair_red)
-              set_px(img, fx + 0, fy + 1, shade(hair_red, -15))
-              set_px(img, fx + 8, fy + 1, shade(hair_red, -15))
-              # Forehead crease
-              fill_rect(img, fx + 2, fy + 1, 5, 1, (214, 208, 198, 255))
-              # Red vertical Pennywise forehead lines
-              set_px(img, fx + 2, fy + 1, red_makeup)
-              set_px(img, fx + 6, fy + 1, red_makeup)
-              # Eyebrows (angry slanted)
-              set_px(img, fx + 1, fy + 2, (58, 22, 20, 255))
-              set_px(img, fx + 2, fy + 2, (48, 14, 14, 255))
-              set_px(img, fx + 3, fy + 3, (48, 14, 14, 255))
-              set_px(img, fx + 7, fy + 2, (58, 22, 20, 255))
-              set_px(img, fx + 6, fy + 2, (48, 14, 14, 255))
-              set_px(img, fx + 5, fy + 3, (48, 14, 14, 255))
-              # Dark sunken eye sockets + evil glowing amber eyes
-              fill_rect(img, fx + 1, fy + 3, 2, 2, (34, 18, 18, 255))
-              fill_rect(img, fx + 6, fy + 3, 2, 2, (34, 18, 18, 255))
-              set_px(img, fx + 2, fy + 4, (238, 188, 36, 255))
-              set_px(img, fx + 6, fy + 4, (238, 188, 36, 255))
-              # Vertical red makeup lines down cheeks to smile
-              set_px(img, fx + 2, fy + 5, red_makeup)
-              set_px(img, fx + 2, fy + 6, red_makeup)
-              set_px(img, fx + 6, fy + 5, red_makeup)
-              set_px(img, fx + 6, fy + 6, red_makeup)
-              # Nose base & upper sinister grin
-              set_px(img, fx + 4, fy + 5, red_dark)
-              set_px(img, fx + 1, fy + 6, red_makeup)
-              set_px(img, fx + 7, fy + 6, red_makeup)
-              fill_rect(img, fx + 1, fy + 7, 7, 1, red_makeup)
-              fill_rect(img, fx + 2, fy + 7, 5, 1, red_dark)
-
-              # 2. forehead dome (8x2x8) UV (36,0)
-              paint_box(img, 36, 0, 8, 2, 8, skin, grain=5, seed=12)
-
-              # 3. nose (2x2x2) UV (36,10)
-              paint_box(img, 36, 10, 2, 2, 2, (208, 18, 22, 255), grain=10, seed=13)
-
-              # 4. teeth (1x2x1) UV (36,14)
-              paint_box(img, 36, 14, 1, 2, 1, tooth_white, grain=5, seed=14)
+              # === ROW 0: HEAD, FACE, FOREHEAD, BROW, CHEEKS, NOSE, TEETH, TONGUE, NECK ===
+              # 1. upper_head (16x14x16) UV (0,0)
+              paint_box(img, 0, 0, 16, 14, 16, skin, grain=5, seed=10)
+              # Roof of mouth (bottom face of upper_head): x 32..48, y 0..16
+              fill_rect(img, 32, 0, 16, 16, mouth_abyss)
+              # High-Res 16x14 Front Face: x 16..32, y 16..30
+              fx, fy = 16, 16
+              # Side face subtle 3D shading
+              fill_rect(img, fx + 0, fy + 0, 1, 14, skin_shadow)
+              fill_rect(img, fx + 15, fy + 0, 1, 14, skin_shadow)
+              # Temple dark red hairline edges
+              fill_rect(img, fx + 0, fy + 0, 2, 3, (124, 22, 16, 255))
+              fill_rect(img, fx + 14, fy + 0, 2, 3, (124, 22, 16, 255))
+              # Forehead frown creases
+              fill_rect(img, fx + 4, fy + 1, 8, 1, skin_shadow)
+              fill_rect(img, fx + 5, fy + 3, 6, 1, skin_shadow)
+              # Iconic Pennywise curved crimson vertical forehead points above brows
+              set_px(img, fx + 4, fy + 2, red_makeup)
+              set_px(img, fx + 11, fy + 2, red_makeup)
+              fill_rect(img, fx + 3, fy + 3, 2, 2, red_makeup)
+              fill_rect(img, fx + 11, fy + 3, 2, 2, red_makeup)
+              # Angry dark brow shadow overhanging eyes
+              fill_rect(img, fx + 2, fy + 4, 4, 1, (48, 18, 18, 255))
+              fill_rect(img, fx + 10, fy + 4, 4, 1, (48, 18, 18, 255))
+              set_px(img, fx + 6, fy + 5, (48, 18, 18, 255))
+              set_px(img, fx + 9, fy + 5, (48, 18, 18, 255))
+              # Deep-set sunken black eye sockets
+              fill_rect(img, fx + 2, fy + 5, 4, 4, (22, 10, 12, 255))
+              fill_rect(img, fx + 10, fy + 5, 4, 4, (22, 10, 12, 255))
+              # Glowing eerie amber-yellow eyes + tiny evil pupils
+              set_px(img, fx + 3, fy + 6, (252, 218, 92, 255))
+              set_px(img, fx + 4, fy + 6, (238, 178, 30, 255))
+              set_px(img, fx + 3, fy + 7, (238, 178, 30, 255))
+              set_px(img, fx + 4, fy + 7, (16, 8, 8, 255))
+              set_px(img, fx + 12, fy + 6, (252, 218, 92, 255))
+              set_px(img, fx + 11, fy + 6, (238, 178, 30, 255))
+              set_px(img, fx + 12, fy + 7, (238, 178, 30, 255))
+              set_px(img, fx + 11, fy + 7, (16, 8, 8, 255))
+              # Vertical red makeup stripes slicing below eyes down cheeks into grin
+              fill_rect(img, fx + 3, fy + 9, 2, 2, red_makeup)
+              fill_rect(img, fx + 11, fy + 9, 2, 2, red_makeup)
+              set_px(img, fx + 2, fy + 10, red_makeup)
+              set_px(img, fx + 13, fy + 10, red_makeup)
+              set_px(img, fx + 2, fy + 11, red_makeup)
+              set_px(img, fx + 3, fy + 11, red_dark)
+              set_px(img, fx + 13, fy + 11, red_makeup)
+              set_px(img, fx + 12, fy + 11, red_dark)
+              # Nose shadow + wide upturned sinister crimson clown smile
+              fill_rect(img, fx + 7, fy + 9, 2, 2, red_dark)
+              fill_rect(img, fx + 2, fy + 12, 12, 1, red_makeup)
+              fill_rect(img, fx + 3, fy + 13, 10, 1, red_dark)
+              # Evil white buck-teeth peek along closed lip seam
+              set_px(img, fx + 7, fy + 13, tooth_white)
+              set_px(img, fx + 8, fy + 13, tooth_white)
               if bloody:
-                  fill_rect(img, 36, 16, 4, 1, blood_fresh)
+                  add_blood_splatter(img, fx + 1, fy + 10, 14, 4, density=120, seed=111)
 
-              # 5. inner_mouth (8x2x7) UV (44,10)
-              paint_box(img, 44, 10, 8, 2, 7, mouth_dark, grain=6, seed=15)
+              # 2. forehead_mid (15x4x15) UV (66,0) & 3. forehead_top (12x3x12) UV (128,0)
+              paint_box(img, 66, 0, 15, 4, 15, skin, grain=5, seed=11)
+              paint_box(img, 128, 0, 12, 3, 12, skin, grain=4, seed=12)
+              # Hair shadow along back edges of dome
+              fill_rect(img, 111, 15, 15, 4, (132, 24, 18, 255))
 
-              # 6. hair_side (4x7x8) UV (74,0)
-              paint_box(img, 74, 0, 4, 7, 8, hair_red, grain=22, seed=16)
+              # 4. brow_ridge (5x2x2) UV (178,0)
+              paint_box(img, 178, 0, 5, 2, 2, skin_shadow, grain=5, seed=13)
+              fill_rect(img, 180, 3, 5, 1, (54, 18, 18, 255))
+              set_px(img, 182, 2, red_makeup)
+              set_px(img, 182, 3, red_makeup)
 
-              # 7. hair_top (7x3x6) UV (98,0)
-              paint_box(img, 98, 0, 7, 3, 6, hair_red, grain=22, seed=17)
+              # 5. cheek_puff (4x4x2) UV (194,0)
+              paint_box(img, 194, 0, 4, 4, 2, skin, grain=4, seed=14)
+              fill_rect(img, 197, 2, 2, 4, red_makeup)
 
-              # 8. hair_back (10x7x3) UV (98,9)
-              paint_box(img, 98, 9, 10, 7, 3, hair_red, grain=20, seed=18)
+              # 6. nose (3x3x3) UV (208,0)
+              paint_box(img, 208, 0, 3, 3, 3, (198, 16, 22, 255), grain=10, seed=15)
 
-              # 9. hair_flare (2x5x6) UV (86,20)
-              paint_box(img, 86, 20, 2, 5, 6, shade(hair_red, 10), grain=22, seed=19)
+              # 7. tooth_long (1x4x1) UV (222,0) & 8. tooth_short (1x3x1) UV (228,0)
+              paint_box(img, 222, 0, 1, 4, 1, tooth_white, grain=4, seed=16)
+              fill_rect(img, 222, 4, 4, 1, blood_fresh)
+              paint_box(img, 228, 0, 1, 3, 1, tooth_white, grain=4, seed=17)
+              fill_rect(img, 228, 3, 4, 1, blood_fresh)
 
-              # 10. jaw (9x3x9) UV (0,19)
-              paint_box(img, 0, 19, 9, 3, 9, skin, grain=6, seed=20)
-              # Top face of jaw (inside mouth floor & tongue): x 9..18, y 19..28
-              fill_rect(img, 9, 19, 9, 9, mouth_dark)
-              fill_rect(img, 11, 21, 5, 5, tongue_col)
-              # Front face of jaw: x 9..18, y 28..31
-              fill_rect(img, 11, 28, 5, 1, red_makeup)
-              set_px(img, 12, 29, red_dark)
-              set_px(img, 14, 29, red_dark)
+              # 9. tongue (8x2x10) UV (178,8) & 10. neck (8x5x8) UV (216,8)
+              paint_box(img, 178, 8, 8, 2, 10, tongue_col, grain=10, seed=18)
+              paint_box(img, 216, 8, 8, 5, 8, skin_shadow, grain=5, seed=19)
+
+              # === ROW 1: JAW, CHIN, MAW CHEEKS, THROAT, UPPER GULLET ===
+              # 11. jaw (16x5x16) UV (0,32)
+              paint_box(img, 0, 32, 16, 5, 16, skin, grain=5, seed=20)
+              # Top face of jaw (inside mouth floor): x 16..32, y 32..48
+              fill_rect(img, 16, 32, 16, 16, mouth_abyss)
+              fill_rect(img, 20, 35, 8, 10, tongue_col)
+              # Front face of jaw: x 16..32, y 48..53
+              fill_rect(img, 20, 48, 8, 1, red_makeup)
+              fill_rect(img, 21, 49, 6, 1, red_dark)
+              set_px(img, 19, 48, red_makeup)
+              set_px(img, 28, 48, red_makeup)
+              set_px(img, 23, 51, skin_shadow)
+              set_px(img, 24, 51, skin_shadow)
               if bloody:
-                  add_blood_splatter(img, 9, 28, 9, 3, density=150, seed=91)
-                  fill_rect(img, 10, 28, 7, 2, blood_fresh)
-                  set_px(img, 11, 30, blood_deep)
-                  set_px(img, 13, 30, blood_fresh)
-                  set_px(img, 15, 30, blood_deep)
+                  add_blood_splatter(img, 16, 48, 16, 5, density=170, seed=112)
+                  fill_rect(img, 19, 48, 10, 2, blood_fresh)
+                  fill_rect(img, 21, 50, 2, 3, blood_deep)
+                  fill_rect(img, 25, 50, 2, 3, blood_fresh)
 
-              # 11. maw_cheek (1x4x5) UV (86,36) & throat back (8x4x1) UV (100,36)
-              paint_box(img, 86, 36, 1, 4, 5, (92, 10, 14, 255), grain=12, seed=21)
-              paint_box(img, 100, 36, 8, 4, 1, (38, 4, 7, 255), grain=6, seed=22)
-
-              # 12. torso (10x11x6) UV (0,32)
-              paint_box(img, 0, 32, 10, 11, 6, suit, grain=8, seed=23)
-              # Pleated vertical lines on front & back of Victorian tunic
-              for px in (7, 9, 11, 13, 15):
-                  fill_rect(img, px, 38, 1, 11, suit_fold)
-              # Red decorative trim lines on chest
-              fill_rect(img, 6, 38, 10, 1, red_dark)
-              fill_rect(img, 6, 48, 10, 1, suit_fold)
+              # 12. chin_bevel (12x2x12) UV (66,32)
+              paint_box(img, 66, 32, 12, 2, 12, skin_shadow, grain=5, seed=21)
               if bloody:
-                  add_blood_splatter(img, 6, 38, 10, 11, density=85, seed=92)
-                  add_blood_splatter(img, 0, 38, 6, 11, density=50, seed=93)
+                  add_blood_splatter(img, 66, 44, 48, 2, density=140, seed=113)
 
-              # 13. pom_pom (2x2x2) UV (34,32)
-              paint_box(img, 34, 32, 2, 2, 2, pom_yellow, grain=18, seed=24)
+              # 13. maw_cheek (2x10x12) UV (116,32), 14. throat_back (14x11x2) UV (146,32), 15. upper_gullet (14x3x13) UV (180,32)
+              paint_box(img, 116, 32, 2, 10, 12, mouth_flesh, grain=12, seed=22)
+              paint_box(img, 146, 32, 14, 11, 2, mouth_abyss, grain=4, seed=23)
+              paint_box(img, 180, 32, 14, 3, 13, mouth_abyss, grain=5, seed=24)
 
-              # 14. collar (12x2x9) UV (44,24) & collar_top (11x2x8) UV (44,36)
-              paint_box(img, 44, 24, 12, 2, 9, (236, 232, 226, 255), grain=8, seed=25)
-              for px in range(44, 86, 2):
-                  fill_rect(img, px, 33, 1, 2, suit_fold)
-              fill_rect(img, 44, 34, 42, 1, red_makeup)
-              paint_box(img, 44, 36, 11, 2, 8, (242, 238, 232, 255), grain=6, seed=26)
-              for px in range(44, 82, 2):
-                  fill_rect(img, px, 44, 1, 2, suit_fold)
+              # === ROW 2: ALL DARK-RED CLOWN HAIR PIECES ===
+              paint_hair_box(img, 0, 58, 5, 8, 12, seed=30)
+              paint_hair_box(img, 36, 58, 6, 7, 10, seed=31)
+              paint_hair_box(img, 70, 58, 5, 6, 8, seed=32)
+              paint_hair_box(img, 98, 58, 4, 5, 6, seed=33)
+              paint_hair_box(img, 120, 58, 5, 4, 6, seed=34)
+              paint_hair_box(img, 144, 58, 3, 3, 4, seed=35)
+              paint_hair_box(img, 160, 58, 16, 13, 5, seed=36)
+              paint_hair_box(img, 204, 58, 12, 6, 4, seed=37)
+
+              # === ROW 3: TORSO, WAIST, PELVIS, PEPLUM, POM-POMS, STAR RUFF COLLAR ===
+              # 24. chest_upper (18x12x11) UV (0,82)
+              paint_pleated_cloth(img, 0, 82, 18, 12, 11, suit, suit_fold, red_trim=False, seed=40)
+              # Vertical crimson Victorian doublet piping on front chest (x 11..29, y 93..105)
+              fill_rect(img, 14, 93, 1, 12, red_dark)
+              fill_rect(img, 25, 93, 1, 12, red_dark)
               if bloody:
-                  add_blood_splatter(img, 50, 32, 16, 4, density=70, seed=94)
+                  add_blood_splatter(img, 11, 93, 18, 12, density=95, seed=114)
 
-              # 15. pelvis (9x4x5) UV (0,50) & skirt_fb (9x4x1) UV (30,50) & skirt_lr (1x4x6) UV (52,50)
-              paint_box(img, 0, 50, 9, 4, 5, suit, grain=8, seed=27)
-              fill_rect(img, 0, 55, 28, 1, (150, 144, 136, 255))
-              paint_box(img, 30, 50, 9, 4, 1, suit, grain=8, seed=28)
-              fill_rect(img, 30, 54, 20, 1, red_dark)
-              paint_box(img, 52, 50, 1, 4, 6, suit, grain=8, seed=29)
-              fill_rect(img, 52, 59, 14, 1, red_dark)
+              # 25. waist_lower (15x8x9) UV (60,82)
+              paint_pleated_cloth(img, 60, 82, 15, 8, 9, suit, suit_fold, red_trim=False, seed=41)
+              fill_rect(img, 60, 97, 48, 2, (152, 146, 138, 255))
               if bloody:
-                  add_blood_splatter(img, 30, 51, 20, 4, density=75, seed=95)
+                  add_blood_splatter(img, 69, 91, 15, 8, density=80, seed=115)
 
-              # 16. Arms: puffed_shoulder (5x6x6) UV (0,64), forearm (4x6x4) UV (24,64),
-              #     wrist_cuff (5x2x5) UV (42,64), hand (4x4x4) UV (64,64)
-              paint_box(img, 0, 64, 5, 6, 6, suit, grain=8, seed=30)
-              for px in range(0, 22, 3):
-                  fill_rect(img, px, 70, 1, 6, suit_fold)
-              paint_box(img, 24, 64, 4, 6, 4, suit, grain=8, seed=31)
-              paint_box(img, 42, 64, 5, 2, 5, (238, 234, 228, 255), grain=7, seed=32)
-              fill_rect(img, 42, 70, 20, 1, red_makeup)
-              paint_box(img, 64, 64, 4, 4, 4, (236, 232, 226, 255), grain=6, seed=33)
-              # Light blood smudges on hands even in clean version (like video)
-              add_blood_splatter(img, 64, 69, 16, 3, density=55, seed=34)
-              add_blood_splatter(img, 24, 71, 16, 3, density=30, seed=35)
+              # 26. pelvis_core (15x6x10) UV (110,82)
+              paint_pleated_cloth(img, 110, 82, 15, 6, 10, suit, suit_fold, red_trim=False, seed=42)
+
+              # 27. peplum_front (8x9x2) UV (162,82) & 28. peplum_side (2x9x10) UV (184,82)
+              paint_pleated_cloth(img, 162, 82, 8, 9, 2, suit, suit_fold, red_trim=True, seed=43)
+              paint_pleated_cloth(img, 184, 82, 2, 9, 10, suit, suit_fold, red_trim=True, seed=44)
+              add_blood_splatter(img, 162, 89, 20, 4, density=55, seed=45)
               if bloody:
-                  add_blood_splatter(img, 64, 64, 16, 8, density=190, seed=96)
-                  add_blood_splatter(img, 42, 64, 20, 7, density=140, seed=97)
-                  add_blood_splatter(img, 24, 68, 16, 6, density=110, seed=98)
-                  add_blood_splatter(img, 0, 70, 22, 6, density=65, seed=99)
+                  add_blood_splatter(img, 162, 84, 20, 9, density=95, seed=116)
+                  add_blood_splatter(img, 184, 92, 24, 9, density=85, seed=117)
 
-              # 17. Legs: thigh (5x7x5) UV (0,80), shin (4x5x4) UV (22,80), shoe (4x2x6) UV (40,80)
-              paint_box(img, 0, 80, 5, 7, 5, suit, grain=8, seed=36)
-              paint_box(img, 22, 80, 4, 5, 4, suit, grain=8, seed=37)
-              add_blood_splatter(img, 22, 84, 16, 5, density=45, seed=38)
+              # 29. pom_pom (4x4x4) UV (210,82) & 30. pom_mini (2x2x2) UV (228,82)
+              paint_box(img, 210, 82, 4, 4, 4, pom_gold, grain=22, seed=46)
+              paint_box(img, 228, 82, 2, 2, 2, (226, 132, 22, 255), grain=18, seed=47)
+
+              # 31. ruff_lower (8x3x7) UV (60,102) & 32. ruff_upper (7x3x6) UV (92,102)
+              paint_pleated_cloth(img, 60, 102, 8, 3, 7, suit_bright, suit_fold, red_trim=True, seed=48)
+              paint_pleated_cloth(img, 92, 102, 7, 3, 6, suit_bright, suit_fold, red_trim=True, seed=49)
               if bloody:
-                  add_blood_splatter(img, 0, 85, 20, 7, density=75, seed=100)
-                  add_blood_splatter(img, 22, 84, 16, 5, density=110, seed=101)
-              paint_box(img, 40, 80, 4, 2, 6, shoe_dark, grain=6, seed=39)
-              # Red clown pom accent on shoe front
-              fill_rect(img, 47, 86, 2, 1, red_makeup)
+                  add_blood_splatter(img, 60, 102, 30, 10, density=75, seed=118)
+                  add_blood_splatter(img, 92, 102, 26, 9, density=90, seed=119)
 
-              save_png(path, 128, 128, img)
+              # 33. chest_placket (6x12x2) UV (120,102)
+              paint_pleated_cloth(img, 120, 102, 6, 12, 2, suit_bright, suit_fold, red_trim=False, seed=50)
+              fill_rect(img, 122, 104, 1, 12, red_makeup)
+              fill_rect(img, 127, 104, 1, 12, red_makeup)
+              if bloody:
+                  add_blood_splatter(img, 122, 104, 6, 12, density=110, seed=120)
+
+              # === ROW 4: PUFFED SHOULDERS, ARMS, WRIST RUFFLES, 5-FINGERED HANDS ===
+              # 34. shoulder_puff (11x9x11) UV (0,124)
+              paint_pleated_cloth(img, 0, 124, 11, 9, 11, suit_bright, suit_fold, red_trim=False, seed=60)
+              # Slashed Renaissance crimson stripe lines on puffed shoulders
+              for px in range(2, 44, 5):
+                  fill_rect(img, px, 136, 1, 7, red_dark)
+              # 35. upper_arm (8x12x8) UV (46,124)
+              paint_pleated_cloth(img, 46, 124, 8, 12, 8, suit, suit_fold, red_trim=False, seed=61)
+              # 36. elbow_ruff (9x3x9) UV (80,124)
+              paint_pleated_cloth(img, 80, 124, 9, 3, 9, suit_bright, suit_fold, red_trim=True, seed=62)
+              # 37. forearm (6x12x6) UV (118,124)
+              paint_pleated_cloth(img, 118, 124, 6, 12, 6, suit, suit_fold, red_trim=False, seed=63)
+              add_blood_splatter(img, 118, 137, 24, 5, density=55, seed=64)
+              # 38. wrist_ruff (5x3x4) UV (144,124)
+              paint_pleated_cloth(img, 144, 124, 5, 3, 4, suit_bright, suit_fold, red_trim=True, seed=65)
+              # 39. palm (6x5x3) UV (164,124), 40. finger_long (1x7x1) UV (184,124),
+              # 41. finger_mid (1x6x1) UV (190,124), 42. thumb (2x4x2) UV (196,124)
+              paint_box(img, 164, 124, 6, 5, 3, suit_bright, grain=5, seed=66)
+              paint_box(img, 184, 124, 1, 7, 1, suit_bright, grain=4, seed=67)
+              paint_box(img, 190, 124, 1, 6, 1, suit_bright, grain=4, seed=68)
+              paint_box(img, 196, 124, 2, 4, 2, suit_bright, grain=4, seed=69)
+              # Subtle crimson stained fingertips (like the video)
+              fill_rect(img, 184, 130, 4, 2, blood_fresh)
+              fill_rect(img, 190, 129, 4, 2, blood_fresh)
+              fill_rect(img, 196, 128, 8, 2, blood_fresh)
+              # 43. shoulder_stripe (12x7x3) UV (206,124)
+              paint_pleated_cloth(img, 206, 124, 12, 7, 3, suit, suit_fold, red_trim=True, seed=70)
+              if bloody:
+                  add_blood_splatter(img, 164, 124, 18, 8, density=190, seed=121)
+                  add_blood_splatter(img, 184, 124, 20, 8, density=200, seed=122)
+                  add_blood_splatter(img, 144, 124, 18, 7, density=145, seed=123)
+                  add_blood_splatter(img, 118, 130, 24, 12, density=115, seed=124)
+                  add_blood_splatter(img, 0, 134, 44, 10, density=60, seed=125)
+
+              # === ROW 5: BAGGY BREECHES, KNEE RUFFLES, SHINS, ANKLE RUFFLES & BOOTS ===
+              # 44. thigh_core (8x14x8) UV (0,156) & 45. thigh_puff (10x9x10) UV (34,156)
+              paint_pleated_cloth(img, 0, 156, 8, 14, 8, suit, suit_fold, red_trim=False, seed=80)
+              paint_pleated_cloth(img, 34, 156, 10, 9, 10, suit_bright, suit_fold, red_trim=False, seed=81)
+              # 46. knee_ruff (8x3x8) UV (76,156)
+              paint_pleated_cloth(img, 76, 156, 8, 3, 8, suit_bright, suit_fold, red_trim=True, seed=82)
+              # 47. shin (6x11x6) UV (110,156) - already blood-stained on lower legs like video!
+              paint_pleated_cloth(img, 110, 156, 6, 11, 6, suit, suit_fold, red_trim=False, seed=83)
+              add_blood_splatter(img, 110, 162, 24, 11, density=80, seed=84)
+              # 48. ankle_ruff (8x3x8) UV (136,156)
+              paint_pleated_cloth(img, 136, 156, 8, 3, 8, suit_bright, suit_fold, red_trim=True, seed=85)
+              # 49. boot_base (8x4x10) UV (170,156) & 50. boot_toe (6x3x4) UV (208,156)
+              paint_box(img, 170, 156, 8, 4, 10, boot_dark, grain=6, seed=86)
+              paint_box(img, 208, 156, 6, 3, 4, boot_dark, grain=6, seed=87)
+              if bloody:
+                  add_blood_splatter(img, 34, 166, 40, 9, density=85, seed=126)
+                  add_blood_splatter(img, 76, 162, 32, 5, density=110, seed=127)
+                  add_blood_splatter(img, 110, 162, 24, 11, density=140, seed=128)
+
+              save_png(path, 256, 256, img)
 
           def generate_victim_texture(path):
-              # Standard 64x64 Minecraft player skin UV (white outfit + brown hair from video)
               img = new_img(64, 64, (0, 0, 0, 0))
               skin = (232, 188, 152, 255)
               hair = (88, 54, 34, 255)
@@ -287,9 +392,7 @@ jobs:
               pants = (232, 232, 236, 255)
               shoe = (108, 70, 44, 255)
 
-              # Head (8x8x8) UV (0,0)
               paint_box(img, 0, 0, 8, 8, 8, skin, grain=4, seed=50)
-              # Hair on top, back, sides, and bangs
               fill_rect(img, 8, 0, 8, 8, hair)
               fill_rect(img, 24, 8, 8, 7, hair)
               fill_rect(img, 0, 8, 8, 3, hair)
@@ -297,24 +400,20 @@ jobs:
               fill_rect(img, 8, 8, 8, 2, hair)
               set_px(img, 8, 10, hair)
               set_px(img, 15, 10, hair)
-              # Eyes and mouth on face (x 8..16, y 8..16)
               set_px(img, 9, 12, (245, 245, 245, 255))
               set_px(img, 10, 12, (56, 42, 34, 255))
               set_px(img, 13, 12, (56, 42, 34, 255))
               set_px(img, 14, 12, (245, 245, 245, 255))
               fill_rect(img, 11, 14, 2, 1, (176, 124, 98, 255))
 
-              # Torso (8x12x4) UV (16,16) - white shirt
               paint_box(img, 16, 16, 8, 12, 4, shirt, grain=5, seed=51)
               fill_rect(img, 20, 20, 8, 1, (212, 212, 218, 255))
 
-              # Right Arm (4x12x4) UV (40,16) & Left Arm (4x12x4) UV (32,48)
               for au, av in ((40, 16), (32, 48)):
                   paint_box(img, au, av, 4, 12, 4, shirt, grain=5, seed=52)
                   fill_rect(img, au, av + 12, 16, 4, skin)
                   fill_rect(img, au + 8, av, 4, 4, skin)
 
-              # Right Leg (4x12x4) UV (0,16) & Left Leg (4x12x4) UV (16,48)
               for lu, lv in ((0, 16), (16, 48)):
                   paint_box(img, lu, lv, 4, 12, 4, pants, grain=5, seed=53)
                   fill_rect(img, lu, lv + 13, 16, 3, shoe)
@@ -322,12 +421,12 @@ jobs:
 
               save_png(path, 64, 64, img)
 
-          # Generate PNG textures
+          # Generate high-res PNG textures
           generate_pennywise_texture("src/main/resources/assets/pennywisemod/textures/entity/pennywise.png", bloody=False)
           generate_pennywise_texture("src/main/resources/assets/pennywisemod/textures/entity/pennywise_bloody.png", bloody=True)
           generate_victim_texture("src/main/resources/assets/pennywisemod/textures/entity/victim.png")
 
-          # Gradle build files
+          # Gradle files
           write_file("settings.gradle", """\
           pluginManagement {
               repositories {
@@ -353,7 +452,7 @@ jobs:
               id 'net.minecraftforge.gradle' version '[6.0,6.2)'
           }
 
-          version = '1.0.0'
+          version = '2.0.0'
           group = 'com.pennywisemod'
 
           base {
@@ -376,7 +475,7 @@ jobs:
                   attributes([
                       'Specification-Title'    : 'pennywisemod',
                       'Specification-Vendor'   : 'PennywiseMod',
-                      'Specification-Version'  : '1',
+                      'Specification-Version'  : '2',
                       'Implementation-Title'   : project.name,
                       'Implementation-Version' : project.version,
                       'Implementation-Vendor'  : 'PennywiseMod'
@@ -398,10 +497,10 @@ jobs:
 
           [[mods]]
           modId="pennywisemod"
-          version="1.0.0"
-          displayName="Pennywise IT Mod"
+          version="2.0.0"
+          displayName="Pennywise IT Mod HD"
           authors="PennywiseMod"
-          description="Pennywise 3D model, jaw-unhinging grab and devour animation, blood particles, and Victim NPC for Forge 1.20.1."
+          description="High-detail 3D sculpted Pennywise with winged red hair, ruffled star collar, 5-fingered hands, 48-tooth unhinging maw, devour animation, and Victim NPC."
 
           [[dependencies.pennywisemod]]
               modId="forge"
@@ -421,7 +520,7 @@ jobs:
           write_file("src/main/resources/pack.mcmeta", """\
           {
             "pack": {
-              "description": "Pennywise IT Mod Resources",
+              "description": "Pennywise IT Mod HD Resources",
               "pack_format": 15
             }
           }
@@ -519,7 +618,7 @@ jobs:
               public static final RegistryObject<EntityType<PennywiseEntity>> PENNYWISE =
                       ENTITY_TYPES.register("pennywise", () ->
                               EntityType.Builder.of(PennywiseEntity::new, MobCategory.MONSTER)
-                                      .sized(0.85F, 2.55F)
+                                      .sized(0.95F, 2.70F)
                                       .clientTrackingRange(10)
                                       .build("pennywise"));
 
@@ -822,9 +921,9 @@ jobs:
                   double fx = -Math.sin(rad);
                   double fz = Math.cos(rad);
                   float pull = Mth.clamp((t - 3) / 18.0F, 0.0F, 1.0F);
-                  double dist = Mth.lerp(pull, 1.05D, 0.72D);
+                  double dist = Mth.lerp(pull, 1.15D, 0.78D);
                   double shake = (t > 22) ? Math.sin(t * 0.75D) * 0.05D : 0.0D;
-                  double yOff = Mth.lerp(pull, 0.05D, 0.42D) + shake;
+                  double yOff = Mth.lerp(pull, 0.08D, 0.52D) + shake;
                   return new Vec3(this.getX() + fx * dist, this.getY() + yOff, this.getZ() + fz * dist);
               }
 
@@ -870,7 +969,6 @@ jobs:
                       }
                   }
 
-                  // Hold target tightly from tick 3 until the lethal chomp at tick 86
                   if (t >= 3 && t < 87) {
                       if (victim == null) {
                           if (t < 40) {
@@ -906,18 +1004,16 @@ jobs:
                       }
                   }
 
-                  // Jaw unhinges terrifyingly wide
                   if (t == 20) {
                       this.playSound(SoundEvents.RAVAGER_ROAR, 0.85F, 1.35F);
                       this.playSound(SoundEvents.ENDERMAN_SCREAM, 0.7F, 0.55F);
                   }
 
-                  // Violent Bite #1 and Bite #2
                   if (t == 44 || t == 64) {
                       this.playSound(SoundEvents.GENERIC_EAT, 1.5F, 0.6F);
                       this.playSound(SoundEvents.PHANTOM_BITE, 1.4F, 0.55F);
                       this.playSound(SoundEvents.ZOMBIE_ATTACK_WOODEN_DOOR, 0.5F, 0.55F);
-                      this.spawnBloodBurst(yaw, 38, 24, 0.35D);
+                      this.spawnBloodBurst(yaw, 42, 26, 0.38D);
                       if (victim != null) {
                           float nonLethalDmg = Math.min(4.0F, Math.max(0.0F, victim.getHealth() - 2.0F));
                           if (nonLethalDmg > 0.0F) {
@@ -926,17 +1022,15 @@ jobs:
                       }
                   }
 
-                  // Continuous dripping blood spray during chewing phase
                   if (t >= 44 && t <= 90 && t % 2 == 0) {
-                      this.spawnBloodBurst(yaw, 8, 6, 0.25D);
+                      this.spawnBloodBurst(yaw, 8, 6, 0.28D);
                   }
 
-                  // Final lethal devour chomp (victim vanishes in blood splatter!)
                   if (t == 86) {
                       this.playSound(SoundEvents.GENERIC_EAT, 1.8F, 0.45F);
                       this.playSound(SoundEvents.PHANTOM_BITE, 1.6F, 0.45F);
                       this.playSound(SoundEvents.PLAYER_BURP, 0.85F, 0.45F);
-                      this.spawnBloodBurst(yaw, 85, 55, 0.55D);
+                      this.spawnBloodBurst(yaw, 90, 60, 0.58D);
                       this.setBloody(true);
                       this.bloodyTimer = 600;
                       this.heal(20.0F);
@@ -953,7 +1047,6 @@ jobs:
                       this.setGrabbedId(-1);
                   }
 
-                  // Stands upright, wipes mouth and giggles sinisterly
                   if (t == 96) {
                       this.playSound(SoundEvents.WITCH_CELEBRATE, 1.15F, 0.62F);
                       this.playSound(SoundEvents.EVOKER_CELEBRATE, 0.85F, 0.68F);
@@ -969,9 +1062,9 @@ jobs:
               private void spawnBloodBurst(float yaw, int blockCount, int dustCount, double spread) {
                   if (!(this.level() instanceof ServerLevel serverLevel)) return;
                   double rad = Math.toRadians(yaw);
-                  double bx = this.getX() - Math.sin(rad) * 0.78D;
-                  double by = this.getY() + 1.55D;
-                  double bz = this.getZ() + Math.cos(rad) * 0.78D;
+                  double bx = this.getX() - Math.sin(rad) * 0.85D;
+                  double by = this.getY() + 1.68D;
+                  double bz = this.getZ() + Math.cos(rad) * 0.85D;
 
                   BlockParticleOption redstoneBlood = new BlockParticleOption(
                           ParticleTypes.BLOCK, Blocks.REDSTONE_BLOCK.defaultBlockState());
@@ -1056,7 +1149,7 @@ jobs:
                       this.mob.getLookControl().setLookAt(target, 30.0F, 30.0F);
                       double distSqr = this.mob.distanceToSqr(target);
 
-                      if (distSqr <= 2.35D * 2.35D && this.mob.devourCooldown <= 0 && this.mob.hasLineOfSight(target)) {
+                      if (distSqr <= 2.45D * 2.45D && this.mob.devourCooldown <= 0 && this.mob.hasLineOfSight(target)) {
                           this.mob.startDevour(target);
                           return;
                       }
@@ -1094,14 +1187,14 @@ jobs:
                               new Keyframe(2.4F, KeyframeAnimations.degreeVec(0.0F, 0.0F, -4.0F), AnimationChannel.Interpolations.CATMULLROM)
                       ))
                       .addAnimation("right_arm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(-6.0F, 0.0F, 8.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.2F, KeyframeAnimations.degreeVec(-12.0F, 0.0F, 12.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(2.4F, KeyframeAnimations.degreeVec(-6.0F, 0.0F, 8.0F), AnimationChannel.Interpolations.CATMULLROM)
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(-5.0F, 0.0F, 7.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.2F, KeyframeAnimations.degreeVec(-11.0F, 0.0F, 11.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.4F, KeyframeAnimations.degreeVec(-5.0F, 0.0F, 7.0F), AnimationChannel.Interpolations.CATMULLROM)
                       ))
                       .addAnimation("left_arm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(-6.0F, 0.0F, -8.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.2F, KeyframeAnimations.degreeVec(-12.0F, 0.0F, -12.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(2.4F, KeyframeAnimations.degreeVec(-6.0F, 0.0F, -8.0F), AnimationChannel.Interpolations.CATMULLROM)
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(-5.0F, 0.0F, -7.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.2F, KeyframeAnimations.degreeVec(-11.0F, 0.0F, -11.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.4F, KeyframeAnimations.degreeVec(-5.0F, 0.0F, -7.0F), AnimationChannel.Interpolations.CATMULLROM)
                       ))
                       .addAnimation("right_forearm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
                               new Keyframe(0.0F, KeyframeAnimations.degreeVec(-10.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
@@ -1118,479 +1211,15 @@ jobs:
               public static final AnimationDefinition DEVOUR = AnimationDefinition.Builder.withLength(6.75F)
                       .addAnimation("body_root", new AnimationChannel(AnimationChannel.Targets.POSITION,
                               new Keyframe(0.0F, KeyframeAnimations.posVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(0.35F, KeyframeAnimations.posVec(0.0F, -2.5F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.1F, KeyframeAnimations.posVec(0.0F, -2.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(2.2F, KeyframeAnimations.posVec(0.0F, -3.0F, -1.5F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(2.7F, KeyframeAnimations.posVec(0.0F, -1.5F, 0.5F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(3.2F, KeyframeAnimations.posVec(0.0F, -3.2F, -1.5F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(3.7F, KeyframeAnimations.posVec(0.0F, -1.5F, 0.5F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.posVec(0.0F, -3.5F, -2.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(0.35F, KeyframeAnimations.posVec(0.0F, -5.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.1F, KeyframeAnimations.posVec(0.0F, -4.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.2F, KeyframeAnimations.posVec(0.0F, -6.0F, -3.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(2.7F, KeyframeAnimations.posVec(0.0F, -3.0F, 1.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(3.2F, KeyframeAnimations.posVec(0.0F, -6.5F, -3.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(3.7F, KeyframeAnimations.posVec(0.0F, -3.0F, 1.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.posVec(0.0F, -7.0F, -4.0F), AnimationChannel.Interpolations.LINEAR),
                               new Keyframe(4.85F, KeyframeAnimations.posVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
                               new Keyframe(6.75F, KeyframeAnimations.posVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
                       ))
                       .addAnimation("torso", new AnimationChannel(AnimationChannel.Targets.ROTATION,
                               new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(0.4F, KeyframeAnimations.degreeVec(24.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.1F, KeyframeAnimations.degreeVec(18.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.85F, KeyframeAnimations.degreeVec(6.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(2.25F, KeyframeAnimations.degreeVec(30.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(2.75F, KeyframeAnimations.degreeVec(10.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(3.25F, KeyframeAnimations.degreeVec(32.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(3.75F, KeyframeAnimations.degreeVec(8.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(36.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(-4.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(5.6F, KeyframeAnimations.degreeVec(2.0F, 0.0F, -4.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
-                      ))
-                      .addAnimation("head", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(0.4F, KeyframeAnimations.degreeVec(-10.0F, 0.0F, 5.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.1F, KeyframeAnimations.degreeVec(-18.0F, 0.0F, -6.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.85F, KeyframeAnimations.degreeVec(-24.0F, 0.0F, 5.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(2.25F, KeyframeAnimations.degreeVec(18.0F, 0.0F, -4.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(2.75F, KeyframeAnimations.degreeVec(-22.0F, 0.0F, 4.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(3.25F, KeyframeAnimations.degreeVec(20.0F, 0.0F, 5.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(3.75F, KeyframeAnimations.degreeVec(-24.0F, 0.0F, -5.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(24.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(4.9F, KeyframeAnimations.degreeVec(-5.0F, 0.0F, -10.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(5.65F, KeyframeAnimations.degreeVec(4.0F, -8.0F, 10.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.3F, KeyframeAnimations.degreeVec(0.0F, 0.0F, -4.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
-                      ))
-                      .addAnimation("upper_head", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(0.9F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.4F, KeyframeAnimations.degreeVec(-22.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(2.05F, KeyframeAnimations.degreeVec(-28.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(2.25F, KeyframeAnimations.degreeVec(-2.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(2.75F, KeyframeAnimations.degreeVec(-26.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(3.25F, KeyframeAnimations.degreeVec(-2.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(3.75F, KeyframeAnimations.degreeVec(-28.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR)
-                      ))
-                      .addAnimation("jaw", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(0.85F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.35F, KeyframeAnimations.degreeVec(56.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(2.05F, KeyframeAnimations.degreeVec(72.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(2.25F, KeyframeAnimations.degreeVec(8.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(2.75F, KeyframeAnimations.degreeVec(68.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(3.25F, KeyframeAnimations.degreeVec(8.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(3.75F, KeyframeAnimations.degreeVec(74.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(4.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
-                              new Keyframe(4.65F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR)
-                      ))
-                      .addAnimation("right_arm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(0.35F, KeyframeAnimations.degreeVec(-72.0F, -18.0F, 12.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.1F, KeyframeAnimations.degreeVec(-92.0F, -26.0F, 8.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(2.25F, KeyframeAnimations.degreeVec(-100.0F, -30.0F, 5.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(-96.0F, -28.0F, 5.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(-40.0F, -10.0F, 18.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(5.25F, KeyframeAnimations.degreeVec(-118.0F, -32.0F, 10.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(5.65F, KeyframeAnimations.degreeVec(-112.0F, -12.0F, 14.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.05F, KeyframeAnimations.degreeVec(-116.0F, -30.0F, 10.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
-                      ))
-                      .addAnimation("right_forearm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(0.35F, KeyframeAnimations.degreeVec(-32.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.1F, KeyframeAnimations.degreeVec(-48.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(-50.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(-20.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(5.25F, KeyframeAnimations.degreeVec(-62.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(5.65F, KeyframeAnimations.degreeVec(-55.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.05F, KeyframeAnimations.degreeVec(-60.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
-                      ))
-                      .addAnimation("left_arm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(0.35F, KeyframeAnimations.degreeVec(-72.0F, 18.0F, -12.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.1F, KeyframeAnimations.degreeVec(-92.0F, 26.0F, -8.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(-96.0F, 28.0F, -5.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.9F, KeyframeAnimations.degreeVec(-14.0F, 5.0F, -14.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
-                      ))
-                      .addAnimation("left_forearm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(0.35F, KeyframeAnimations.degreeVec(-32.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(1.1F, KeyframeAnimations.degreeVec(-48.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(-50.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.9F, KeyframeAnimations.degreeVec(-10.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
-                      ))
-                      .addAnimation("right_leg", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(0.4F, KeyframeAnimations.degreeVec(-18.0F, 0.0F, 6.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(-22.0F, 0.0F, 8.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
-                      ))
-                      .addAnimation("right_shin", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(0.4F, KeyframeAnimations.degreeVec(28.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(32.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
-                      ))
-                      .addAnimation("left_leg", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(0.4F, KeyframeAnimations.degreeVec(-18.0F, 0.0F, -6.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(-22.0F, 0.0F, -8.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
-                      ))
-                      .addAnimation("left_shin", new AnimationChannel(AnimationChannel.Targets.ROTATION,
-                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(0.4F, KeyframeAnimations.degreeVec(28.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(32.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
-                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
-                      ))
-                      .build();
-          }
-          """)
-
-          # Client: PennywiseModel
-          write_file("src/main/java/com/pennywisemod/client/PennywiseModel.java", """\
-          package com.pennywisemod.client;
-
-          import com.pennywisemod.PennywiseMod;
-          import com.pennywisemod.entity.PennywiseEntity;
-          import net.minecraft.client.model.HierarchicalModel;
-          import net.minecraft.client.model.geom.ModelLayerLocation;
-          import net.minecraft.client.model.geom.ModelPart;
-          import net.minecraft.client.model.geom.PartPose;
-          import net.minecraft.client.model.geom.builders.CubeDeformation;
-          import net.minecraft.client.model.geom.builders.CubeListBuilder;
-          import net.minecraft.client.model.geom.builders.LayerDefinition;
-          import net.minecraft.client.model.geom.builders.MeshDefinition;
-          import net.minecraft.client.model.geom.builders.PartDefinition;
-          import net.minecraft.resources.ResourceLocation;
-          import net.minecraft.util.Mth;
-
-          public class PennywiseModel extends HierarchicalModel<PennywiseEntity> {
-              public static final ModelLayerLocation LAYER_LOCATION =
-                      new ModelLayerLocation(new ResourceLocation(PennywiseMod.MOD_ID, "pennywise"), "main");
-
-              private final ModelPart root;
-              private final ModelPart torso;
-              private final ModelPart head;
-              private final ModelPart upperHead;
-              private final ModelPart upperTeeth;
-              private final ModelPart innerMouth;
-              private final ModelPart jaw;
-              private final ModelPart lowerTeeth;
-              private final ModelPart mawCheeks;
-              private final ModelPart rightArm;
-              private final ModelPart rightForearm;
-              private final ModelPart leftArm;
-              private final ModelPart leftForearm;
-              private final ModelPart rightLeg;
-              private final ModelPart rightShin;
-              private final ModelPart leftLeg;
-              private final ModelPart leftShin;
-
-              public PennywiseModel(ModelPart root) {
-                  this.root = root;
-                  ModelPart bodyRoot = root.getChild("body_root");
-                  ModelPart pelvis = bodyRoot.getChild("pelvis");
-                  this.torso = pelvis.getChild("torso");
-                  this.head = this.torso.getChild("head");
-                  this.upperHead = this.head.getChild("upper_head");
-                  this.upperTeeth = this.upperHead.getChild("upper_teeth");
-                  this.innerMouth = this.upperHead.getChild("inner_mouth");
-                  this.jaw = this.head.getChild("jaw");
-                  this.lowerTeeth = this.jaw.getChild("lower_teeth");
-                  this.mawCheeks = this.head.getChild("maw_cheeks");
-                  this.rightArm = this.torso.getChild("right_arm");
-                  this.rightForearm = this.rightArm.getChild("right_forearm");
-                  this.leftArm = this.torso.getChild("left_arm");
-                  this.leftForearm = this.leftArm.getChild("left_forearm");
-                  this.rightLeg = bodyRoot.getChild("right_leg");
-                  this.rightShin = this.rightLeg.getChild("right_shin");
-                  this.leftLeg = bodyRoot.getChild("left_leg");
-                  this.leftShin = this.leftLeg.getChild("left_shin");
-              }
-
-              public static LayerDefinition createBodyLayer() {
-                  MeshDefinition mesh = new MeshDefinition();
-                  PartDefinition root = mesh.getRoot();
-
-                  PartDefinition bodyRoot = root.addOrReplaceChild("body_root",
-                          CubeListBuilder.create(),
-                          PartPose.offset(0.0F, 24.0F, 0.0F));
-
-                  // Pelvis + Victorian pleated clown tunic skirt
-                  PartDefinition pelvis = bodyRoot.addOrReplaceChild("pelvis",
-                          CubeListBuilder.create()
-                                  .texOffs(0, 50).addBox(-4.5F, -4.0F, -2.5F, 9.0F, 4.0F, 5.0F)
-                                  .texOffs(30, 50).addBox(-4.5F, -0.5F, -3.5F, 9.0F, 4.0F, 1.0F)
-                                  .texOffs(30, 50).addBox(-4.5F, -0.5F, 2.5F, 9.0F, 4.0F, 1.0F)
-                                  .texOffs(52, 50).addBox(-5.2F, -0.5F, -3.0F, 1.0F, 4.0F, 6.0F)
-                                  .texOffs(52, 50).addBox(4.2F, -0.5F, -3.0F, 1.0F, 4.0F, 6.0F),
-                          PartPose.offset(0.0F, -14.0F, 0.0F));
-
-                  // Torso + 2 yellow-orange pom-poms + double Victorian neck ruffles
-                  PartDefinition torso = pelvis.addOrReplaceChild("torso",
-                          CubeListBuilder.create()
-                                  .texOffs(0, 32).addBox(-5.0F, -11.0F, -3.0F, 10.0F, 11.0F, 6.0F)
-                                  .texOffs(34, 32).addBox(-1.0F, -8.5F, -4.2F, 2.0F, 2.0F, 2.0F)
-                                  .texOffs(34, 32).addBox(-1.0F, -4.5F, -4.2F, 2.0F, 2.0F, 2.0F)
-                                  .texOffs(44, 24).addBox(-6.0F, -12.6F, -4.5F, 12.0F, 2.0F, 9.0F)
-                                  .texOffs(44, 36).addBox(-5.5F, -14.0F, -4.0F, 11.0F, 2.0F, 8.0F),
-                          PartPose.offset(0.0F, -4.0F, 0.0F));
-
-                  // Head root
-                  PartDefinition head = torso.addOrReplaceChild("head",
-                          CubeListBuilder.create(),
-                          PartPose.offset(0.0F, -13.5F, 0.0F));
-
-                  // Upper skull + high Pennywise forehead + red nose + wild red hair tufts
-                  PartDefinition upperHead = head.addOrReplaceChild("upper_head",
-                          CubeListBuilder.create()
-                                  .texOffs(0, 0).addBox(-4.5F, -8.0F, -6.5F, 9.0F, 8.0F, 9.0F)
-                                  .texOffs(36, 0).addBox(-4.0F, -9.5F, -6.0F, 8.0F, 2.0F, 8.0F)
-                                  .texOffs(36, 10).addBox(-1.0F, -3.2F, -7.8F, 2.0F, 2.0F, 2.0F)
-                                  .texOffs(74, 0).addBox(-7.8F, -8.2F, -5.2F, 4.0F, 7.0F, 8.0F)
-                                  .texOffs(74, 0).addBox(3.8F, -8.2F, -5.2F, 4.0F, 7.0F, 8.0F)
-                                  .texOffs(86, 20).addBox(-8.6F, -7.2F, -4.2F, 2.0F, 5.0F, 6.0F)
-                                  .texOffs(86, 20).addBox(6.6F, -7.2F, -4.2F, 2.0F, 5.0F, 6.0F)
-                                  .texOffs(98, 0).addBox(-3.5F, -11.2F, -4.0F, 7.0F, 3.0F, 6.0F)
-                                  .texOffs(98, 9).addBox(-5.0F, -8.5F, 1.5F, 10.0F, 7.0F, 3.0F),
-                          PartPose.offset(0.0F, -2.5F, 2.0F));
-
-                  // Upper razor-sharp teeth row (visible when jaw unhinges!)
-                  CubeListBuilder upperTeethBuilder = CubeListBuilder.create();
-                  for (int i = 0; i < 6; i++) {
-                      float tx = -3.7F + i * 1.28F;
-                      upperTeethBuilder.texOffs(36, 14).addBox(tx, -0.3F, -6.1F, 1.0F, 2.0F, 1.0F, new CubeDeformation(-0.12F));
-                      upperTeethBuilder.texOffs(36, 14).addBox(tx, -0.5F, -4.6F, 1.0F, 2.0F, 1.0F, new CubeDeformation(-0.16F));
-                  }
-                  upperHead.addOrReplaceChild("upper_teeth", upperTeethBuilder, PartPose.ZERO);
-
-                  // Dark inner mouth cavity ceiling
-                  upperHead.addOrReplaceChild("inner_mouth",
-                          CubeListBuilder.create()
-                                  .texOffs(44, 10).addBox(-4.0F, -1.6F, -5.8F, 8.0F, 2.0F, 7.0F),
-                          PartPose.ZERO);
-
-                  // Articulated unhinging lower jaw
-                  PartDefinition jaw = head.addOrReplaceChild("jaw",
-                          CubeListBuilder.create()
-                                  .texOffs(0, 19).addBox(-4.5F, 0.0F, -6.5F, 9.0F, 3.0F, 9.0F),
-                          PartPose.offset(0.0F, -2.5F, 2.0F));
-
-                  // Lower razor-sharp teeth row
-                  CubeListBuilder lowerTeethBuilder = CubeListBuilder.create();
-                  for (int i = 0; i < 6; i++) {
-                      float tx = -3.7F + i * 1.28F;
-                      lowerTeethBuilder.texOffs(36, 14).addBox(tx, -1.7F, -6.1F, 1.0F, 2.0F, 1.0F, new CubeDeformation(-0.12F));
-                      lowerTeethBuilder.texOffs(36, 14).addBox(tx, -1.5F, -4.6F, 1.0F, 2.0F, 1.0F, new CubeDeformation(-0.16F));
-                  }
-                  jaw.addOrReplaceChild("lower_teeth", lowerTeethBuilder, PartPose.ZERO);
-
-                  // Stretched dark-red fleshy maw sides + throat back when mouth opens wide
-                  head.addOrReplaceChild("maw_cheeks",
-                          CubeListBuilder.create()
-                                  .texOffs(86, 36).addBox(-4.2F, -1.0F, -3.5F, 1.0F, 4.0F, 5.0F)
-                                  .texOffs(86, 36).addBox(3.2F, -1.0F, -3.5F, 1.0F, 4.0F, 5.0F)
-                                  .texOffs(100, 36).addBox(-4.0F, -1.0F, 1.0F, 8.0F, 4.0F, 1.0F),
-                          PartPose.offset(0.0F, -2.5F, 0.0F));
-
-                  // Right Arm (puffed Victorian shoulder + ruffled cuff + clawed hand)
-                  PartDefinition rightArm = torso.addOrReplaceChild("right_arm",
-                          CubeListBuilder.create()
-                                  .texOffs(0, 64).addBox(-4.5F, -1.5F, -3.0F, 5.0F, 6.0F, 6.0F),
-                          PartPose.offset(-5.5F, -9.8F, 0.0F));
-
-                  rightArm.addOrReplaceChild("right_forearm",
-                          CubeListBuilder.create()
-                                  .texOffs(24, 64).addBox(-2.0F, 0.0F, -2.0F, 4.0F, 6.0F, 4.0F)
-                                  .texOffs(42, 64).addBox(-2.5F, 5.0F, -2.5F, 5.0F, 2.0F, 5.0F)
-                                  .texOffs(64, 64).addBox(-2.0F, 6.8F, -2.0F, 4.0F, 4.0F, 4.0F),
-                          PartPose.offset(-2.0F, 4.5F, 0.0F));
-
-                  // Left Arm
-                  PartDefinition leftArm = torso.addOrReplaceChild("left_arm",
-                          CubeListBuilder.create()
-                                  .texOffs(0, 64).mirror().addBox(-0.5F, -1.5F, -3.0F, 5.0F, 6.0F, 6.0F),
-                          PartPose.offset(5.5F, -9.8F, 0.0F));
-
-                  leftArm.addOrReplaceChild("left_forearm",
-                          CubeListBuilder.create()
-                                  .texOffs(24, 64).mirror().addBox(-2.0F, 0.0F, -2.0F, 4.0F, 6.0F, 4.0F)
-                                  .texOffs(42, 64).mirror().addBox(-2.5F, 5.0F, -2.5F, 5.0F, 2.0F, 5.0F)
-                                  .texOffs(64, 64).mirror().addBox(-2.0F, 6.8F, -2.0F, 4.0F, 4.0F, 4.0F),
-                          PartPose.offset(2.0F, 4.5F, 0.0F));
-
-                  // Right Leg (puffed trouser thigh + shin + dark Victorian clown shoe)
-                  PartDefinition rightLeg = bodyRoot.addOrReplaceChild("right_leg",
-                          CubeListBuilder.create()
-                                  .texOffs(0, 80).addBox(-2.5F, 0.0F, -2.5F, 5.0F, 7.0F, 5.0F),
-                          PartPose.offset(-2.6F, -14.0F, 0.0F));
-
-                  rightLeg.addOrReplaceChild("right_shin",
-                          CubeListBuilder.create()
-                                  .texOffs(22, 80).addBox(-2.0F, 0.0F, -2.0F, 4.0F, 5.0F, 4.0F)
-                                  .texOffs(40, 80).addBox(-2.0F, 5.0F, -4.0F, 4.0F, 2.0F, 6.0F),
-                          PartPose.offset(0.0F, 7.0F, 0.0F));
-
-                  // Left Leg
-                  PartDefinition leftLeg = bodyRoot.addOrReplaceChild("left_leg",
-                          CubeListBuilder.create()
-                                  .texOffs(0, 80).mirror().addBox(-2.5F, 0.0F, -2.5F, 5.0F, 7.0F, 5.0F),
-                          PartPose.offset(2.6F, -14.0F, 0.0F));
-
-                  leftLeg.addOrReplaceChild("left_shin",
-                          CubeListBuilder.create()
-                                  .texOffs(22, 80).mirror().addBox(-2.0F, 0.0F, -2.0F, 4.0F, 5.0F, 4.0F)
-                                  .texOffs(40, 80).mirror().addBox(-2.0F, 5.0F, -4.0F, 4.0F, 2.0F, 6.0F),
-                          PartPose.offset(0.0F, 7.0F, 0.0F));
-
-                  return LayerDefinition.create(mesh, 128, 128);
-              }
-
-              @Override
-              public ModelPart root() {
-                  return this.root;
-              }
-
-              @Override
-              public void setupAnim(PennywiseEntity entity, float limbSwing, float limbSwingAmount,
-                                    float ageInTicks, float netHeadYaw, float headPitch) {
-                  this.root().getAllParts().forEach(ModelPart::resetPose);
-
-                  if (entity.isDevouring()) {
-                      this.animate(entity.devourAnimationState, PennywiseAnimations.DEVOUR, ageInTicks, 1.0F);
-                  } else {
-                      this.head.yRot += Mth.clamp(netHeadYaw, -45.0F, 45.0F) * ((float) Math.PI / 180.0F);
-                      this.head.xRot += Mth.clamp(headPitch, -25.0F, 25.0F) * ((float) Math.PI / 180.0F);
-
-                      // Menacing stalking walk cycle
-                      this.rightLeg.xRot += Mth.cos(limbSwing * 0.6662F) * 0.9F * limbSwingAmount;
-                      this.leftLeg.xRot += Mth.cos(limbSwing * 0.6662F + (float) Math.PI) * 0.9F * limbSwingAmount;
-                      this.rightShin.xRot += Math.max(0.0F, Mth.sin(limbSwing * 0.6662F)) * 0.55F * limbSwingAmount;
-                      this.leftShin.xRot += Math.max(0.0F, Mth.sin(limbSwing * 0.6662F + (float) Math.PI)) * 0.55F * limbSwingAmount;
-                      this.rightArm.xRot += Mth.cos(limbSwing * 0.6662F + (float) Math.PI) * 0.75F * limbSwingAmount;
-                      this.leftArm.xRot += Mth.cos(limbSwing * 0.6662F) * 0.75F * limbSwingAmount;
-                      this.rightForearm.xRot -= 0.25F * limbSwingAmount;
-                      this.leftForearm.xRot -= 0.25F * limbSwingAmount;
-                      this.torso.xRot += 0.16F * limbSwingAmount;
-
-                      this.animate(entity.idleAnimationState, PennywiseAnimations.IDLE, ageInTicks, 1.0F);
-                  }
-
-                  boolean mouthOpen = this.jaw.xRot > 0.12F;
-                  this.upperTeeth.visible = mouthOpen;
-                  this.lowerTeeth.visible = mouthOpen;
-                  this.innerMouth.visible = mouthOpen;
-                  this.mawCheeks.visible = mouthOpen;
-                  if (mouthOpen) {
-                      this.mawCheeks.yScale = Mth.clamp(this.jaw.xRot * 1.45F, 0.35F, 1.85F);
-                  }
-              }
-          }
-          """)
-
-          # Client: PennywiseRenderer
-          write_file("src/main/java/com/pennywisemod/client/PennywiseRenderer.java", """\
-          package com.pennywisemod.client;
-
-          import com.mojang.blaze3d.vertex.PoseStack;
-          import com.pennywisemod.PennywiseMod;
-          import com.pennywisemod.entity.PennywiseEntity;
-          import net.minecraft.client.renderer.entity.EntityRendererProvider;
-          import net.minecraft.client.renderer.entity.MobRenderer;
-          import net.minecraft.resources.ResourceLocation;
-
-          public class PennywiseRenderer extends MobRenderer<PennywiseEntity, PennywiseModel> {
-              private static final ResourceLocation CLEAN_TEXTURE =
-                      new ResourceLocation(PennywiseMod.MOD_ID, "textures/entity/pennywise.png");
-              private static final ResourceLocation BLOODY_TEXTURE =
-                      new ResourceLocation(PennywiseMod.MOD_ID, "textures/entity/pennywise_bloody.png");
-
-              public PennywiseRenderer(EntityRendererProvider.Context context) {
-                  super(context, new PennywiseModel(context.bakeLayer(PennywiseModel.LAYER_LOCATION)), 0.75F);
-              }
-
-              @Override
-              public ResourceLocation getTextureLocation(PennywiseEntity entity) {
-                  return entity.isBloody() ? BLOODY_TEXTURE : CLEAN_TEXTURE;
-              }
-
-              @Override
-              protected void scale(PennywiseEntity entity, PoseStack poseStack, float partialTickTime) {
-                  poseStack.scale(1.06F, 1.06F, 1.06F);
-                  super.scale(entity, poseStack, partialTickTime);
-              }
-          }
-          """)
-
-          # Client: VictimRenderer
-          write_file("src/main/java/com/pennywisemod/client/VictimRenderer.java", """\
-          package com.pennywisemod.client;
-
-          import com.pennywisemod.PennywiseMod;
-          import com.pennywisemod.entity.VictimEntity;
-          import net.minecraft.client.model.HumanoidModel;
-          import net.minecraft.client.model.geom.ModelLayers;
-          import net.minecraft.client.renderer.entity.EntityRendererProvider;
-          import net.minecraft.client.renderer.entity.HumanoidMobRenderer;
-          import net.minecraft.resources.ResourceLocation;
-
-          public class VictimRenderer extends HumanoidMobRenderer<VictimEntity, HumanoidModel<VictimEntity>> {
-              private static final ResourceLocation TEXTURE =
-                      new ResourceLocation(PennywiseMod.MOD_ID, "textures/entity/victim.png");
-
-              public VictimRenderer(EntityRendererProvider.Context context) {
-                  super(context, new HumanoidModel<>(context.bakeLayer(ModelLayers.PLAYER)), 0.5F);
-              }
-
-              @Override
-              public ResourceLocation getTextureLocation(VictimEntity entity) {
-                  return TEXTURE;
-              }
-          }
-          """)
-
-          # Client: ClientEvents
-          write_file("src/main/java/com/pennywisemod/client/ClientEvents.java", """\
-          package com.pennywisemod.client;
-
-          import com.pennywisemod.PennywiseMod;
-          import com.pennywisemod.registry.ModEntities;
-          import net.minecraftforge.api.distmarker.Dist;
-          import net.minecraftforge.client.event.EntityRenderersEvent;
-          import net.minecraftforge.eventbus.api.SubscribeEvent;
-          import net.minecraftforge.fml.common.Mod;
-
-          @Mod.EventBusSubscriber(modid = PennywiseMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
-          public class ClientEvents {
-
-              @SubscribeEvent
-              public static void registerLayerDefinitions(EntityRenderersEvent.RegisterLayerDefinitions event) {
-                  event.registerLayerDefinition(PennywiseModel.LAYER_LOCATION, PennywiseModel::createBodyLayer);
-              }
-
-              @SubscribeEvent
-              public static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
-                  event.registerEntityRenderer(ModEntities.PENNYWISE.get(), PennywiseRenderer::new);
-                  event.registerEntityRenderer(ModEntities.VICTIM.get(), VictimRenderer::new);
-              }
-          }
-          """)
-
-          print("Projeto Pennywise 1.20.1 Forge gerado com sucesso!")
-          PYEOF
-
-      - name: Compilar Mod (.jar)
-        run: gradle build --no-daemon --stacktrace
-
-      - name: Salvar arquivo .jar pronto para download
-        uses: actions/upload-artifact@v4
-        with:
-          name: pennywisemod-1.20.1-forge
-          path: build/libs/*.jar
