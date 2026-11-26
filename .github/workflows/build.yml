@@ -1,0 +1,1596 @@
+name: Compilar Mod Pennywise 1.20.1 Forge
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Configurar Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Gerar projeto, modelos, animacoes e texturas
+        run: |
+          python3 - << 'PYEOF'
+          import os
+          import struct
+          import zlib
+
+          def write_file(path, content):
+              folder = os.path.dirname(path)
+              if folder:
+                  os.makedirs(folder, exist_ok=True)
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(content)
+
+          def save_png(path, w, h, pixels):
+              os.makedirs(os.path.dirname(path), exist_ok=True)
+              def chunk(tag, data):
+                  return (
+                      struct.pack(">I", len(data))
+                      + tag
+                      + data
+                      + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+                  )
+              raw = bytearray()
+              for y in range(h):
+                  raw.append(0)
+                  row = pixels[y]
+                  for x in range(w):
+                      r, g, b, a = row[x]
+                      raw.extend((r, g, b, a))
+              ihdr = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
+              png = (
+                  b"\x89PNG\r\n\x1a\n"
+                  + chunk(b"IHDR", ihdr)
+                  + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+                  + chunk(b"IEND", b"")
+              )
+              with open(path, "wb") as f:
+                  f.write(png)
+
+          def new_img(w, h, fill=(0, 0, 0, 0)):
+              return [[fill for _ in range(w)] for _ in range(h)]
+
+          def set_px(img, x, y, col):
+              if 0 <= y < len(img) and 0 <= x < len(img[0]):
+                  img[y][x] = col
+
+          def fill_rect(img, x, y, w, h, col):
+              for yy in range(y, y + h):
+                  for xx in range(x, x + w):
+                      set_px(img, xx, yy, col)
+
+          def noise_val(x, y, seed):
+              n = (x * 374761393 + y * 668265263 + seed * 1442695041) & 0xFFFFFFFF
+              n = ((n ^ (n >> 13)) * 1274126177) & 0xFFFFFFFF
+              return (n ^ (n >> 16)) & 0xFF
+
+          def shade(col, delta):
+              return (
+                  max(0, min(255, col[0] + delta)),
+                  max(0, min(255, col[1] + delta)),
+                  max(0, min(255, col[2] + delta)),
+                  col[3],
+              )
+
+          def paint_box(img, u, v, w, h, d, base_col, grain=10, seed=1):
+              rects = [
+                  (u + d, v, w, d, 8),
+                  (u + d + w, v, w, d, -14),
+                  (u, v + d, d, h, -6),
+                  (u + d, v + d, w, h, 2),
+                  (u + d + w, v + d, d, h, -6),
+                  (u + 2 * d + w, v + d, w, h, -10),
+              ]
+              for rx, ry, rw, rh, bias in rects:
+                  for yy in range(ry, ry + rh):
+                      for xx in range(rx, rx + rw):
+                          nv = (noise_val(xx, yy, seed) % (grain * 2 + 1)) - grain
+                          set_px(img, xx, yy, shade(base_col, bias + nv))
+
+          def add_blood_splatter(img, x, y, w, h, density=42, seed=77):
+              blood_dark = (112, 8, 12, 255)
+              blood_mid = (158, 14, 18, 255)
+              for yy in range(y, y + h):
+                  for xx in range(x, x + w):
+                      nv = noise_val(xx, yy, seed)
+                      if nv < density:
+                          set_px(img, xx, yy, blood_dark if (nv % 2 == 0) else blood_mid)
+
+          def generate_pennywise_texture(path, bloody=False):
+              img = new_img(128, 128, (0, 0, 0, 0))
+
+              skin = (238, 234, 226, 255)
+              suit = (224, 220, 212, 255)
+              suit_fold = (182, 176, 168, 255)
+              red_makeup = (178, 16, 22, 255)
+              red_dark = (118, 10, 14, 255)
+              hair_red = (152, 28, 18, 255)
+              pom_yellow = (236, 172, 28, 255)
+              mouth_dark = (46, 5, 8, 255)
+              tongue_col = (138, 22, 28, 255)
+              tooth_white = (244, 238, 220, 255)
+              shoe_dark = (44, 40, 44, 255)
+              blood_fresh = (142, 10, 14, 255)
+              blood_deep = (92, 5, 8, 255)
+
+              # 1. upper_head (9x8x9) UV (0,0)
+              paint_box(img, 0, 0, 9, 8, 9, skin, grain=6, seed=11)
+              # Roof of mouth (bottom face of upper_head): x 18..27, y 0..9
+              fill_rect(img, 18, 0, 9, 9, mouth_dark)
+              # Front face of upper_head: x 9..18, y 9..17 (9x8)
+              fx, fy = 9, 9
+              # Forehead hairline & shadow
+              set_px(img, fx + 0, fy + 0, hair_red)
+              set_px(img, fx + 8, fy + 0, hair_red)
+              set_px(img, fx + 0, fy + 1, shade(hair_red, -15))
+              set_px(img, fx + 8, fy + 1, shade(hair_red, -15))
+              # Forehead crease
+              fill_rect(img, fx + 2, fy + 1, 5, 1, (214, 208, 198, 255))
+              # Red vertical Pennywise forehead lines
+              set_px(img, fx + 2, fy + 1, red_makeup)
+              set_px(img, fx + 6, fy + 1, red_makeup)
+              # Eyebrows (angry slanted)
+              set_px(img, fx + 1, fy + 2, (58, 22, 20, 255))
+              set_px(img, fx + 2, fy + 2, (48, 14, 14, 255))
+              set_px(img, fx + 3, fy + 3, (48, 14, 14, 255))
+              set_px(img, fx + 7, fy + 2, (58, 22, 20, 255))
+              set_px(img, fx + 6, fy + 2, (48, 14, 14, 255))
+              set_px(img, fx + 5, fy + 3, (48, 14, 14, 255))
+              # Dark sunken eye sockets + evil glowing amber eyes
+              fill_rect(img, fx + 1, fy + 3, 2, 2, (34, 18, 18, 255))
+              fill_rect(img, fx + 6, fy + 3, 2, 2, (34, 18, 18, 255))
+              set_px(img, fx + 2, fy + 4, (238, 188, 36, 255))
+              set_px(img, fx + 6, fy + 4, (238, 188, 36, 255))
+              # Vertical red makeup lines down cheeks to smile
+              set_px(img, fx + 2, fy + 5, red_makeup)
+              set_px(img, fx + 2, fy + 6, red_makeup)
+              set_px(img, fx + 6, fy + 5, red_makeup)
+              set_px(img, fx + 6, fy + 6, red_makeup)
+              # Nose base & upper sinister grin
+              set_px(img, fx + 4, fy + 5, red_dark)
+              set_px(img, fx + 1, fy + 6, red_makeup)
+              set_px(img, fx + 7, fy + 6, red_makeup)
+              fill_rect(img, fx + 1, fy + 7, 7, 1, red_makeup)
+              fill_rect(img, fx + 2, fy + 7, 5, 1, red_dark)
+
+              # 2. forehead dome (8x2x8) UV (36,0)
+              paint_box(img, 36, 0, 8, 2, 8, skin, grain=5, seed=12)
+
+              # 3. nose (2x2x2) UV (36,10)
+              paint_box(img, 36, 10, 2, 2, 2, (208, 18, 22, 255), grain=10, seed=13)
+
+              # 4. teeth (1x2x1) UV (36,14)
+              paint_box(img, 36, 14, 1, 2, 1, tooth_white, grain=5, seed=14)
+              if bloody:
+                  fill_rect(img, 36, 16, 4, 1, blood_fresh)
+
+              # 5. inner_mouth (8x2x7) UV (44,10)
+              paint_box(img, 44, 10, 8, 2, 7, mouth_dark, grain=6, seed=15)
+
+              # 6. hair_side (4x7x8) UV (74,0)
+              paint_box(img, 74, 0, 4, 7, 8, hair_red, grain=22, seed=16)
+
+              # 7. hair_top (7x3x6) UV (98,0)
+              paint_box(img, 98, 0, 7, 3, 6, hair_red, grain=22, seed=17)
+
+              # 8. hair_back (10x7x3) UV (98,9)
+              paint_box(img, 98, 9, 10, 7, 3, hair_red, grain=20, seed=18)
+
+              # 9. hair_flare (2x5x6) UV (86,20)
+              paint_box(img, 86, 20, 2, 5, 6, shade(hair_red, 10), grain=22, seed=19)
+
+              # 10. jaw (9x3x9) UV (0,19)
+              paint_box(img, 0, 19, 9, 3, 9, skin, grain=6, seed=20)
+              # Top face of jaw (inside mouth floor & tongue): x 9..18, y 19..28
+              fill_rect(img, 9, 19, 9, 9, mouth_dark)
+              fill_rect(img, 11, 21, 5, 5, tongue_col)
+              # Front face of jaw: x 9..18, y 28..31
+              fill_rect(img, 11, 28, 5, 1, red_makeup)
+              set_px(img, 12, 29, red_dark)
+              set_px(img, 14, 29, red_dark)
+              if bloody:
+                  add_blood_splatter(img, 9, 28, 9, 3, density=150, seed=91)
+                  fill_rect(img, 10, 28, 7, 2, blood_fresh)
+                  set_px(img, 11, 30, blood_deep)
+                  set_px(img, 13, 30, blood_fresh)
+                  set_px(img, 15, 30, blood_deep)
+
+              # 11. maw_cheek (1x4x5) UV (86,36) & throat back (8x4x1) UV (100,36)
+              paint_box(img, 86, 36, 1, 4, 5, (92, 10, 14, 255), grain=12, seed=21)
+              paint_box(img, 100, 36, 8, 4, 1, (38, 4, 7, 255), grain=6, seed=22)
+
+              # 12. torso (10x11x6) UV (0,32)
+              paint_box(img, 0, 32, 10, 11, 6, suit, grain=8, seed=23)
+              # Pleated vertical lines on front & back of Victorian tunic
+              for px in (7, 9, 11, 13, 15):
+                  fill_rect(img, px, 38, 1, 11, suit_fold)
+              # Red decorative trim lines on chest
+              fill_rect(img, 6, 38, 10, 1, red_dark)
+              fill_rect(img, 6, 48, 10, 1, suit_fold)
+              if bloody:
+                  add_blood_splatter(img, 6, 38, 10, 11, density=85, seed=92)
+                  add_blood_splatter(img, 0, 38, 6, 11, density=50, seed=93)
+
+              # 13. pom_pom (2x2x2) UV (34,32)
+              paint_box(img, 34, 32, 2, 2, 2, pom_yellow, grain=18, seed=24)
+
+              # 14. collar (12x2x9) UV (44,24) & collar_top (11x2x8) UV (44,36)
+              paint_box(img, 44, 24, 12, 2, 9, (236, 232, 226, 255), grain=8, seed=25)
+              for px in range(44, 86, 2):
+                  fill_rect(img, px, 33, 1, 2, suit_fold)
+              fill_rect(img, 44, 34, 42, 1, red_makeup)
+              paint_box(img, 44, 36, 11, 2, 8, (242, 238, 232, 255), grain=6, seed=26)
+              for px in range(44, 82, 2):
+                  fill_rect(img, px, 44, 1, 2, suit_fold)
+              if bloody:
+                  add_blood_splatter(img, 50, 32, 16, 4, density=70, seed=94)
+
+              # 15. pelvis (9x4x5) UV (0,50) & skirt_fb (9x4x1) UV (30,50) & skirt_lr (1x4x6) UV (52,50)
+              paint_box(img, 0, 50, 9, 4, 5, suit, grain=8, seed=27)
+              fill_rect(img, 0, 55, 28, 1, (150, 144, 136, 255))
+              paint_box(img, 30, 50, 9, 4, 1, suit, grain=8, seed=28)
+              fill_rect(img, 30, 54, 20, 1, red_dark)
+              paint_box(img, 52, 50, 1, 4, 6, suit, grain=8, seed=29)
+              fill_rect(img, 52, 59, 14, 1, red_dark)
+              if bloody:
+                  add_blood_splatter(img, 30, 51, 20, 4, density=75, seed=95)
+
+              # 16. Arms: puffed_shoulder (5x6x6) UV (0,64), forearm (4x6x4) UV (24,64),
+              #     wrist_cuff (5x2x5) UV (42,64), hand (4x4x4) UV (64,64)
+              paint_box(img, 0, 64, 5, 6, 6, suit, grain=8, seed=30)
+              for px in range(0, 22, 3):
+                  fill_rect(img, px, 70, 1, 6, suit_fold)
+              paint_box(img, 24, 64, 4, 6, 4, suit, grain=8, seed=31)
+              paint_box(img, 42, 64, 5, 2, 5, (238, 234, 228, 255), grain=7, seed=32)
+              fill_rect(img, 42, 70, 20, 1, red_makeup)
+              paint_box(img, 64, 64, 4, 4, 4, (236, 232, 226, 255), grain=6, seed=33)
+              # Light blood smudges on hands even in clean version (like video)
+              add_blood_splatter(img, 64, 69, 16, 3, density=55, seed=34)
+              add_blood_splatter(img, 24, 71, 16, 3, density=30, seed=35)
+              if bloody:
+                  add_blood_splatter(img, 64, 64, 16, 8, density=190, seed=96)
+                  add_blood_splatter(img, 42, 64, 20, 7, density=140, seed=97)
+                  add_blood_splatter(img, 24, 68, 16, 6, density=110, seed=98)
+                  add_blood_splatter(img, 0, 70, 22, 6, density=65, seed=99)
+
+              # 17. Legs: thigh (5x7x5) UV (0,80), shin (4x5x4) UV (22,80), shoe (4x2x6) UV (40,80)
+              paint_box(img, 0, 80, 5, 7, 5, suit, grain=8, seed=36)
+              paint_box(img, 22, 80, 4, 5, 4, suit, grain=8, seed=37)
+              add_blood_splatter(img, 22, 84, 16, 5, density=45, seed=38)
+              if bloody:
+                  add_blood_splatter(img, 0, 85, 20, 7, density=75, seed=100)
+                  add_blood_splatter(img, 22, 84, 16, 5, density=110, seed=101)
+              paint_box(img, 40, 80, 4, 2, 6, shoe_dark, grain=6, seed=39)
+              # Red clown pom accent on shoe front
+              fill_rect(img, 47, 86, 2, 1, red_makeup)
+
+              save_png(path, 128, 128, img)
+
+          def generate_victim_texture(path):
+              # Standard 64x64 Minecraft player skin UV (white outfit + brown hair from video)
+              img = new_img(64, 64, (0, 0, 0, 0))
+              skin = (232, 188, 152, 255)
+              hair = (88, 54, 34, 255)
+              shirt = (240, 240, 242, 255)
+              pants = (232, 232, 236, 255)
+              shoe = (108, 70, 44, 255)
+
+              # Head (8x8x8) UV (0,0)
+              paint_box(img, 0, 0, 8, 8, 8, skin, grain=4, seed=50)
+              # Hair on top, back, sides, and bangs
+              fill_rect(img, 8, 0, 8, 8, hair)
+              fill_rect(img, 24, 8, 8, 7, hair)
+              fill_rect(img, 0, 8, 8, 3, hair)
+              fill_rect(img, 16, 8, 8, 3, hair)
+              fill_rect(img, 8, 8, 8, 2, hair)
+              set_px(img, 8, 10, hair)
+              set_px(img, 15, 10, hair)
+              # Eyes and mouth on face (x 8..16, y 8..16)
+              set_px(img, 9, 12, (245, 245, 245, 255))
+              set_px(img, 10, 12, (56, 42, 34, 255))
+              set_px(img, 13, 12, (56, 42, 34, 255))
+              set_px(img, 14, 12, (245, 245, 245, 255))
+              fill_rect(img, 11, 14, 2, 1, (176, 124, 98, 255))
+
+              # Torso (8x12x4) UV (16,16) - white shirt
+              paint_box(img, 16, 16, 8, 12, 4, shirt, grain=5, seed=51)
+              fill_rect(img, 20, 20, 8, 1, (212, 212, 218, 255))
+
+              # Right Arm (4x12x4) UV (40,16) & Left Arm (4x12x4) UV (32,48)
+              for au, av in ((40, 16), (32, 48)):
+                  paint_box(img, au, av, 4, 12, 4, shirt, grain=5, seed=52)
+                  fill_rect(img, au, av + 12, 16, 4, skin)
+                  fill_rect(img, au + 8, av, 4, 4, skin)
+
+              # Right Leg (4x12x4) UV (0,16) & Left Leg (4x12x4) UV (16,48)
+              for lu, lv in ((0, 16), (16, 48)):
+                  paint_box(img, lu, lv, 4, 12, 4, pants, grain=5, seed=53)
+                  fill_rect(img, lu, lv + 13, 16, 3, shoe)
+                  fill_rect(img, lu + 8, lv, 4, 4, shoe)
+
+              save_png(path, 64, 64, img)
+
+          # Generate PNG textures
+          generate_pennywise_texture("src/main/resources/assets/pennywisemod/textures/entity/pennywise.png", bloody=False)
+          generate_pennywise_texture("src/main/resources/assets/pennywisemod/textures/entity/pennywise_bloody.png", bloody=True)
+          generate_victim_texture("src/main/resources/assets/pennywisemod/textures/entity/victim.png")
+
+          # Gradle build files
+          write_file("settings.gradle", """\
+          pluginManagement {
+              repositories {
+                  gradlePluginPortal()
+                  maven {
+                      name = 'MinecraftForge'
+                      url = 'https://maven.minecraftforge.net/'
+                  }
+                  mavenCentral()
+              }
+          }
+          rootProject.name = 'pennywisemod'
+          """)
+
+          write_file("gradle.properties", """\
+          org.gradle.jvmargs=-Xmx4G
+          org.gradle.daemon=false
+          """)
+
+          write_file("build.gradle", """\
+          plugins {
+              id 'java'
+              id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+          }
+
+          version = '1.0.0'
+          group = 'com.pennywisemod'
+
+          base {
+              archivesName = 'pennywisemod'
+          }
+
+          java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+          minecraft {
+              mappings channel: 'official', version: '1.20.1'
+              copyIdeResources = true
+          }
+
+          dependencies {
+              minecraft 'net.minecraftforge:forge:1.20.1-47.2.0'
+          }
+
+          tasks.named('jar', Jar).configure {
+              manifest {
+                  attributes([
+                      'Specification-Title'    : 'pennywisemod',
+                      'Specification-Vendor'   : 'PennywiseMod',
+                      'Specification-Version'  : '1',
+                      'Implementation-Title'   : project.name,
+                      'Implementation-Version' : project.version,
+                      'Implementation-Vendor'  : 'PennywiseMod'
+                  ])
+              }
+              finalizedBy 'reobfJar'
+          }
+
+          tasks.withType(JavaCompile).configureEach {
+              options.encoding = 'UTF-8'
+          }
+          """)
+
+          # Mod metadata & resources
+          write_file("src/main/resources/META-INF/mods.toml", """\
+          modLoader="javafml"
+          loaderVersion="[47,)"
+          license="MIT"
+
+          [[mods]]
+          modId="pennywisemod"
+          version="1.0.0"
+          displayName="Pennywise IT Mod"
+          authors="PennywiseMod"
+          description="Pennywise 3D model, jaw-unhinging grab and devour animation, blood particles, and Victim NPC for Forge 1.20.1."
+
+          [[dependencies.pennywisemod]]
+              modId="forge"
+              mandatory=true
+              versionRange="[47,)"
+              ordering="NONE"
+              side="BOTH"
+
+          [[dependencies.pennywisemod]]
+              modId="minecraft"
+              mandatory=true
+              versionRange="[1.20.1,1.21)"
+              ordering="NONE"
+              side="BOTH"
+          """)
+
+          write_file("src/main/resources/pack.mcmeta", """\
+          {
+            "pack": {
+              "description": "Pennywise IT Mod Resources",
+              "pack_format": 15
+            }
+          }
+          """)
+
+          write_file("src/main/resources/assets/pennywisemod/lang/en_us.json", """\
+          {
+            "entity.pennywisemod.pennywise": "Pennywise",
+            "entity.pennywisemod.victim": "Victim",
+            "item.pennywisemod.pennywise_spawn_egg": "Pennywise Spawn Egg",
+            "item.pennywisemod.victim_spawn_egg": "Victim Spawn Egg"
+          }
+          """)
+
+          write_file("src/main/resources/assets/pennywisemod/lang/pt_br.json", """\
+          {
+            "entity.pennywisemod.pennywise": "Pennywise",
+            "entity.pennywisemod.victim": "Vitima",
+            "item.pennywisemod.pennywise_spawn_egg": "Ovo de Invocacao do Pennywise",
+            "item.pennywisemod.victim_spawn_egg": "Ovo de Invocacao de Vitima"
+          }
+          """)
+
+          write_file("src/main/resources/assets/pennywisemod/models/item/pennywise_spawn_egg.json", """\
+          {
+            "parent": "minecraft:item/template_spawn_egg"
+          }
+          """)
+
+          write_file("src/main/resources/assets/pennywisemod/models/item/victim_spawn_egg.json", """\
+          {
+            "parent": "minecraft:item/template_spawn_egg"
+          }
+          """)
+
+          # Main Mod Class
+          write_file("src/main/java/com/pennywisemod/PennywiseMod.java", """\
+          package com.pennywisemod;
+
+          import com.pennywisemod.entity.PennywiseEntity;
+          import com.pennywisemod.entity.VictimEntity;
+          import com.pennywisemod.registry.ModEntities;
+          import com.pennywisemod.registry.ModItems;
+          import net.minecraft.world.item.CreativeModeTabs;
+          import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
+          import net.minecraftforge.event.entity.EntityAttributeCreationEvent;
+          import net.minecraftforge.eventbus.api.IEventBus;
+          import net.minecraftforge.fml.common.Mod;
+          import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
+
+          @Mod(PennywiseMod.MOD_ID)
+          public class PennywiseMod {
+              public static final String MOD_ID = "pennywisemod";
+
+              public PennywiseMod() {
+                  IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
+                  ModEntities.register(modEventBus);
+                  ModItems.register(modEventBus);
+                  modEventBus.addListener(this::addCreative);
+                  modEventBus.addListener(this::registerAttributes);
+              }
+
+              private void addCreative(BuildCreativeModeTabContentsEvent event) {
+                  if (event.getTabKey() == CreativeModeTabs.SPAWN_EGGS) {
+                      event.accept(ModItems.PENNYWISE_SPAWN_EGG.get());
+                      event.accept(ModItems.VICTIM_SPAWN_EGG.get());
+                  }
+              }
+
+              private void registerAttributes(EntityAttributeCreationEvent event) {
+                  event.put(ModEntities.PENNYWISE.get(), PennywiseEntity.createAttributes().build());
+                  event.put(ModEntities.VICTIM.get(), VictimEntity.createAttributes().build());
+              }
+          }
+          """)
+
+          # Registry: ModEntities
+          write_file("src/main/java/com/pennywisemod/registry/ModEntities.java", """\
+          package com.pennywisemod.registry;
+
+          import com.pennywisemod.PennywiseMod;
+          import com.pennywisemod.entity.PennywiseEntity;
+          import com.pennywisemod.entity.VictimEntity;
+          import net.minecraft.world.entity.EntityType;
+          import net.minecraft.world.entity.MobCategory;
+          import net.minecraftforge.eventbus.api.IEventBus;
+          import net.minecraftforge.registries.DeferredRegister;
+          import net.minecraftforge.registries.ForgeRegistries;
+          import net.minecraftforge.registries.RegistryObject;
+
+          public class ModEntities {
+              public static final DeferredRegister<EntityType<?>> ENTITY_TYPES =
+                      DeferredRegister.create(ForgeRegistries.ENTITY_TYPES, PennywiseMod.MOD_ID);
+
+              public static final RegistryObject<EntityType<PennywiseEntity>> PENNYWISE =
+                      ENTITY_TYPES.register("pennywise", () ->
+                              EntityType.Builder.of(PennywiseEntity::new, MobCategory.MONSTER)
+                                      .sized(0.85F, 2.55F)
+                                      .clientTrackingRange(10)
+                                      .build("pennywise"));
+
+              public static final RegistryObject<EntityType<VictimEntity>> VICTIM =
+                      ENTITY_TYPES.register("victim", () ->
+                              EntityType.Builder.of(VictimEntity::new, MobCategory.CREATURE)
+                                      .sized(0.6F, 1.8F)
+                                      .clientTrackingRange(8)
+                                      .build("victim"));
+
+              public static void register(IEventBus eventBus) {
+                  ENTITY_TYPES.register(eventBus);
+              }
+          }
+          """)
+
+          # Registry: ModItems
+          write_file("src/main/java/com/pennywisemod/registry/ModItems.java", """\
+          package com.pennywisemod.registry;
+
+          import com.pennywisemod.PennywiseMod;
+          import net.minecraft.world.item.Item;
+          import net.minecraftforge.common.ForgeSpawnEggItem;
+          import net.minecraftforge.eventbus.api.IEventBus;
+          import net.minecraftforge.registries.DeferredRegister;
+          import net.minecraftforge.registries.ForgeRegistries;
+          import net.minecraftforge.registries.RegistryObject;
+
+          public class ModItems {
+              public static final DeferredRegister<Item> ITEMS =
+                      DeferredRegister.create(ForgeRegistries.ITEMS, PennywiseMod.MOD_ID);
+
+              public static final RegistryObject<Item> PENNYWISE_SPAWN_EGG =
+                      ITEMS.register("pennywise_spawn_egg", () ->
+                              new ForgeSpawnEggItem(ModEntities.PENNYWISE, 0xF0ECE4, 0xB80F0A, new Item.Properties()));
+
+              public static final RegistryObject<Item> VICTIM_SPAWN_EGG =
+                      ITEMS.register("victim_spawn_egg", () ->
+                              new ForgeSpawnEggItem(ModEntities.VICTIM, 0xF5F5F5, 0xD8A988, new Item.Properties()));
+
+              public static void register(IEventBus eventBus) {
+                  ITEMS.register(eventBus);
+              }
+          }
+          """)
+
+          # Entity: VictimEntity
+          write_file("src/main/java/com/pennywisemod/entity/VictimEntity.java", """\
+          package com.pennywisemod.entity;
+
+          import net.minecraft.world.entity.EntityType;
+          import net.minecraft.world.entity.Mob;
+          import net.minecraft.world.entity.PathfinderMob;
+          import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+          import net.minecraft.world.entity.ai.attributes.Attributes;
+          import net.minecraft.world.entity.ai.goal.FloatGoal;
+          import net.minecraft.world.entity.ai.goal.LookAtPlayerGoal;
+          import net.minecraft.world.entity.ai.goal.PanicGoal;
+          import net.minecraft.world.entity.ai.goal.RandomLookAroundGoal;
+          import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
+          import net.minecraft.world.entity.player.Player;
+          import net.minecraft.world.level.Level;
+
+          public class VictimEntity extends PathfinderMob {
+              public VictimEntity(EntityType<? extends PathfinderMob> type, Level level) {
+                  super(type, level);
+              }
+
+              public static AttributeSupplier.Builder createAttributes() {
+                  return Mob.createMobAttributes()
+                          .add(Attributes.MAX_HEALTH, 20.0D)
+                          .add(Attributes.MOVEMENT_SPEED, 0.25D);
+              }
+
+              @Override
+              protected void registerGoals() {
+                  this.goalSelector.addGoal(0, new FloatGoal(this));
+                  this.goalSelector.addGoal(1, new PanicGoal(this, 1.1D));
+                  this.goalSelector.addGoal(2, new WaterAvoidingRandomStrollGoal(this, 0.65D));
+                  this.goalSelector.addGoal(3, new LookAtPlayerGoal(this, PennywiseEntity.class, 8.0F));
+                  this.goalSelector.addGoal(4, new LookAtPlayerGoal(this, Player.class, 8.0F));
+                  this.goalSelector.addGoal(5, new RandomLookAroundGoal(this));
+              }
+          }
+          """)
+
+          # Entity: PennywiseEntity
+          write_file("src/main/java/com/pennywisemod/entity/PennywiseEntity.java", """\
+          package com.pennywisemod.entity;
+
+          import net.minecraft.core.particles.BlockParticleOption;
+          import net.minecraft.core.particles.DustParticleOptions;
+          import net.minecraft.core.particles.ParticleTypes;
+          import net.minecraft.nbt.CompoundTag;
+          import net.minecraft.network.syncher.EntityDataAccessor;
+          import net.minecraft.network.syncher.EntityDataSerializers;
+          import net.minecraft.network.syncher.SynchedEntityData;
+          import net.minecraft.server.level.ServerLevel;
+          import net.minecraft.sounds.SoundEvent;
+          import net.minecraft.sounds.SoundEvents;
+          import net.minecraft.util.Mth;
+          import net.minecraft.world.damagesource.DamageSource;
+          import net.minecraft.world.effect.MobEffectInstance;
+          import net.minecraft.world.effect.MobEffects;
+          import net.minecraft.world.entity.AnimationState;
+          import net.minecraft.world.entity.Entity;
+          import net.minecraft.world.entity.EntityType;
+          import net.minecraft.world.entity.LivingEntity;
+          import net.minecraft.world.entity.Mob;
+          import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+          import net.minecraft.world.entity.ai.attributes.Attributes;
+          import net.minecraft.world.entity.ai.goal.FloatGoal;
+          import net.minecraft.world.entity.ai.goal.Goal;
+          import net.minecraft.world.entity.ai.goal.LookAtPlayerGoal;
+          import net.minecraft.world.entity.ai.goal.RandomLookAroundGoal;
+          import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
+          import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
+          import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
+          import net.minecraft.world.entity.animal.IronGolem;
+          import net.minecraft.world.entity.monster.Monster;
+          import net.minecraft.world.entity.npc.Villager;
+          import net.minecraft.world.entity.player.Player;
+          import net.minecraft.world.level.Level;
+          import net.minecraft.world.level.block.Blocks;
+          import net.minecraft.world.phys.Vec3;
+          import org.joml.Vector3f;
+
+          import java.util.EnumSet;
+
+          public class PennywiseEntity extends Monster {
+              private static final EntityDataAccessor<Boolean> DATA_DEVOURING =
+                      SynchedEntityData.defineId(PennywiseEntity.class, EntityDataSerializers.BOOLEAN);
+              private static final EntityDataAccessor<Integer> DATA_DEVOUR_TICK =
+                      SynchedEntityData.defineId(PennywiseEntity.class, EntityDataSerializers.INT);
+              private static final EntityDataAccessor<Integer> DATA_GRABBED_ID =
+                      SynchedEntityData.defineId(PennywiseEntity.class, EntityDataSerializers.INT);
+              private static final EntityDataAccessor<Boolean> DATA_BLOODY =
+                      SynchedEntityData.defineId(PennywiseEntity.class, EntityDataSerializers.BOOLEAN);
+              private static final EntityDataAccessor<Float> DATA_GRAB_YAW =
+                      SynchedEntityData.defineId(PennywiseEntity.class, EntityDataSerializers.FLOAT);
+
+              public static final int TOTAL_DEVOUR_TICKS = 135;
+
+              public final AnimationState idleAnimationState = new AnimationState();
+              public final AnimationState devourAnimationState = new AnimationState();
+
+              private boolean wasDevouringClient = false;
+              private int devourCooldown = 0;
+              private int bloodyTimer = 0;
+
+              public PennywiseEntity(EntityType<? extends Monster> type, Level level) {
+                  super(type, level);
+                  this.xpReward = 50;
+              }
+
+              public static AttributeSupplier.Builder createAttributes() {
+                  return Monster.createMonsterAttributes()
+                          .add(Attributes.MAX_HEALTH, 200.0D)
+                          .add(Attributes.MOVEMENT_SPEED, 0.31D)
+                          .add(Attributes.ATTACK_DAMAGE, 14.0D)
+                          .add(Attributes.FOLLOW_RANGE, 40.0D)
+                          .add(Attributes.KNOCKBACK_RESISTANCE, 0.75D);
+              }
+
+              @Override
+              protected void defineSynchedData() {
+                  super.defineSynchedData();
+                  this.entityData.define(DATA_DEVOURING, false);
+                  this.entityData.define(DATA_DEVOUR_TICK, 0);
+                  this.entityData.define(DATA_GRABBED_ID, -1);
+                  this.entityData.define(DATA_BLOODY, false);
+                  this.entityData.define(DATA_GRAB_YAW, 0.0F);
+              }
+
+              @Override
+              protected void registerGoals() {
+                  this.goalSelector.addGoal(0, new FloatGoal(this));
+                  this.goalSelector.addGoal(1, new DevourAttackGoal(this));
+                  this.goalSelector.addGoal(2, new WaterAvoidingRandomStrollGoal(this, 0.75D));
+                  this.goalSelector.addGoal(3, new LookAtPlayerGoal(this, Player.class, 12.0F));
+                  this.goalSelector.addGoal(4, new RandomLookAroundGoal(this));
+
+                  this.targetSelector.addGoal(1, new HurtByTargetGoal(this));
+                  this.targetSelector.addGoal(2, new NearestAttackableTargetGoal<>(this, VictimEntity.class, true));
+                  this.targetSelector.addGoal(3, new NearestAttackableTargetGoal<>(this, Villager.class, true));
+                  this.targetSelector.addGoal(4, new NearestAttackableTargetGoal<>(this, Player.class, true));
+                  this.targetSelector.addGoal(5, new NearestAttackableTargetGoal<>(this, IronGolem.class, true));
+              }
+
+              public boolean isDevouring() {
+                  return this.entityData.get(DATA_DEVOURING);
+              }
+
+              public void setDevouring(boolean value) {
+                  this.entityData.set(DATA_DEVOURING, value);
+              }
+
+              public int getDevourTick() {
+                  return this.entityData.get(DATA_DEVOUR_TICK);
+              }
+
+              public void setDevourTick(int tick) {
+                  this.entityData.set(DATA_DEVOUR_TICK, tick);
+              }
+
+              public int getGrabbedId() {
+                  return this.entityData.get(DATA_GRABBED_ID);
+              }
+
+              public void setGrabbedId(int id) {
+                  this.entityData.set(DATA_GRABBED_ID, id);
+              }
+
+              public boolean isBloody() {
+                  return this.entityData.get(DATA_BLOODY);
+              }
+
+              public void setBloody(boolean bloody) {
+                  this.entityData.set(DATA_BLOODY, bloody);
+              }
+
+              public float getGrabYaw() {
+                  return this.entityData.get(DATA_GRAB_YAW);
+              }
+
+              public void setGrabYaw(float yaw) {
+                  this.entityData.set(DATA_GRAB_YAW, yaw);
+              }
+
+              public void startDevour(LivingEntity target) {
+                  double dx = target.getX() - this.getX();
+                  double dz = target.getZ() - this.getZ();
+                  float yaw = (float) (Mth.atan2(dz, dx) * (180.0D / Math.PI)) - 90.0F;
+                  this.setGrabYaw(yaw);
+                  this.setYRot(yaw);
+                  this.yBodyRot = yaw;
+                  this.yHeadRot = yaw;
+                  this.setGrabbedId(target.getId());
+                  this.setDevourTick(0);
+                  this.setDevouring(true);
+                  this.getNavigation().stop();
+                  this.setDeltaMovement(Vec3.ZERO);
+                  this.playSound(SoundEvents.EVOKER_PREPARE_ATTACK, 1.1F, 0.62F);
+              }
+
+              private void cancelDevour() {
+                  this.setDevouring(false);
+                  this.setDevourTick(0);
+                  this.setGrabbedId(-1);
+                  this.devourCooldown = 45;
+              }
+
+              @Override
+              public void tick() {
+                  super.tick();
+
+                  if (this.level().isClientSide()) {
+                      boolean devouring = this.isDevouring();
+                      if (devouring && !this.wasDevouringClient) {
+                          this.devourAnimationState.start(this.tickCount);
+                      } else if (!devouring && this.wasDevouringClient) {
+                          this.devourAnimationState.stop();
+                      }
+                      this.wasDevouringClient = devouring;
+
+                      if (!devouring) {
+                          this.idleAnimationState.startIfStopped(this.tickCount);
+                      } else {
+                          this.idleAnimationState.stop();
+                      }
+
+                      if (devouring) {
+                          float yaw = this.getGrabYaw();
+                          this.setYRot(yaw);
+                          this.yBodyRot = yaw;
+                          this.yHeadRot = yaw;
+                          this.holdVictimClient(yaw, this.getDevourTick());
+                      }
+                      return;
+                  }
+
+                  if (this.devourCooldown > 0) {
+                      this.devourCooldown--;
+                  }
+
+                  if (this.bloodyTimer > 0) {
+                      this.bloodyTimer--;
+                      if (this.bloodyTimer == 0) {
+                          this.setBloody(false);
+                      }
+                  }
+
+                  if (this.isDevouring()) {
+                      this.tickDevourServer();
+                  }
+              }
+
+              private Vec3 computeHoldPosition(float yaw, int t) {
+                  double rad = Math.toRadians(yaw);
+                  double fx = -Math.sin(rad);
+                  double fz = Math.cos(rad);
+                  float pull = Mth.clamp((t - 3) / 18.0F, 0.0F, 1.0F);
+                  double dist = Mth.lerp(pull, 1.05D, 0.72D);
+                  double shake = (t > 22) ? Math.sin(t * 0.75D) * 0.05D : 0.0D;
+                  double yOff = Mth.lerp(pull, 0.05D, 0.42D) + shake;
+                  return new Vec3(this.getX() + fx * dist, this.getY() + yOff, this.getZ() + fz * dist);
+              }
+
+              private void holdVictimClient(float yaw, int t) {
+                  if (t < 3 || t >= 87) return;
+                  int id = this.getGrabbedId();
+                  if (id < 0) return;
+                  Entity entity = this.level().getEntity(id);
+                  if (entity instanceof LivingEntity victim && !(victim instanceof Player) && victim.isAlive()) {
+                      Vec3 pos = this.computeHoldPosition(yaw, t);
+                      float victimYaw = yaw + 180.0F;
+                      victim.setPos(pos.x, pos.y, pos.z);
+                      victim.xo = pos.x;
+                      victim.yo = pos.y;
+                      victim.zo = pos.z;
+                      victim.setDeltaMovement(Vec3.ZERO);
+                      victim.setOnGround(false);
+                      victim.setYRot(victimYaw);
+                      victim.setYBodyRot(victimYaw);
+                      victim.setYHeadRot(victimYaw);
+                  }
+              }
+
+              private void tickDevourServer() {
+                  int t = this.getDevourTick();
+                  float yaw = this.getGrabYaw();
+
+                  this.getNavigation().stop();
+                  this.setDeltaMovement(0.0D, Math.min(0.0D, this.getDeltaMovement().y), 0.0D);
+                  this.setYRot(yaw);
+                  this.yBodyRot = yaw;
+                  this.yHeadRot = yaw;
+                  this.yRotO = yaw;
+                  this.yBodyRotO = yaw;
+                  this.yHeadRotO = yaw;
+
+                  LivingEntity victim = null;
+                  int grabbedId = this.getGrabbedId();
+                  if (grabbedId >= 0) {
+                      Entity e = this.level().getEntity(grabbedId);
+                      if (e instanceof LivingEntity living && living.isAlive()) {
+                          victim = living;
+                      }
+                  }
+
+                  // Hold target tightly from tick 3 until the lethal chomp at tick 86
+                  if (t >= 3 && t < 87) {
+                      if (victim == null) {
+                          if (t < 40) {
+                              this.cancelDevour();
+                              return;
+                          }
+                      } else {
+                          Vec3 holdPos = this.computeHoldPosition(yaw, t);
+                          float victimYaw = yaw + 180.0F;
+                          if (victim instanceof Player player) {
+                              if (player.isCreative() || player.isSpectator() || this.distanceToSqr(player) > 20.0D) {
+                                  this.cancelDevour();
+                                  return;
+                              }
+                              Vec3 pullVec = holdPos.subtract(player.position()).scale(0.55D);
+                              player.setDeltaMovement(pullVec);
+                              player.hurtMarked = true;
+                              player.fallDistance = 0.0F;
+                              player.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 12, 6, false, false));
+                              player.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 25, 0, false, false));
+                          } else {
+                              victim.setPos(holdPos.x, holdPos.y, holdPos.z);
+                              victim.setDeltaMovement(Vec3.ZERO);
+                              victim.setOnGround(false);
+                              victim.fallDistance = 0.0F;
+                              victim.setYRot(victimYaw);
+                              victim.setYBodyRot(victimYaw);
+                              victim.setYHeadRot(victimYaw);
+                              if (victim instanceof Mob mob) {
+                                  mob.getNavigation().stop();
+                              }
+                          }
+                      }
+                  }
+
+                  // Jaw unhinges terrifyingly wide
+                  if (t == 20) {
+                      this.playSound(SoundEvents.RAVAGER_ROAR, 0.85F, 1.35F);
+                      this.playSound(SoundEvents.ENDERMAN_SCREAM, 0.7F, 0.55F);
+                  }
+
+                  // Violent Bite #1 and Bite #2
+                  if (t == 44 || t == 64) {
+                      this.playSound(SoundEvents.GENERIC_EAT, 1.5F, 0.6F);
+                      this.playSound(SoundEvents.PHANTOM_BITE, 1.4F, 0.55F);
+                      this.playSound(SoundEvents.ZOMBIE_ATTACK_WOODEN_DOOR, 0.5F, 0.55F);
+                      this.spawnBloodBurst(yaw, 38, 24, 0.35D);
+                      if (victim != null) {
+                          float nonLethalDmg = Math.min(4.0F, Math.max(0.0F, victim.getHealth() - 2.0F));
+                          if (nonLethalDmg > 0.0F) {
+                              victim.hurt(this.damageSources().mobAttack(this), nonLethalDmg);
+                          }
+                      }
+                  }
+
+                  // Continuous dripping blood spray during chewing phase
+                  if (t >= 44 && t <= 90 && t % 2 == 0) {
+                      this.spawnBloodBurst(yaw, 8, 6, 0.25D);
+                  }
+
+                  // Final lethal devour chomp (victim vanishes in blood splatter!)
+                  if (t == 86) {
+                      this.playSound(SoundEvents.GENERIC_EAT, 1.8F, 0.45F);
+                      this.playSound(SoundEvents.PHANTOM_BITE, 1.6F, 0.45F);
+                      this.playSound(SoundEvents.PLAYER_BURP, 0.85F, 0.45F);
+                      this.spawnBloodBurst(yaw, 85, 55, 0.55D);
+                      this.setBloody(true);
+                      this.bloodyTimer = 600;
+                      this.heal(20.0F);
+                      if (victim != null) {
+                          if (victim instanceof Player player) {
+                              if (!player.isCreative() && !player.isSpectator()) {
+                                  player.hurt(this.damageSources().mobAttack(this), 9999.0F);
+                              }
+                          } else {
+                              victim.hurt(this.damageSources().mobAttack(this), 9999.0F);
+                              victim.discard();
+                          }
+                      }
+                      this.setGrabbedId(-1);
+                  }
+
+                  // Stands upright, wipes mouth and giggles sinisterly
+                  if (t == 96) {
+                      this.playSound(SoundEvents.WITCH_CELEBRATE, 1.15F, 0.62F);
+                      this.playSound(SoundEvents.EVOKER_CELEBRATE, 0.85F, 0.68F);
+                  }
+
+                  if (t >= TOTAL_DEVOUR_TICKS) {
+                      this.cancelDevour();
+                  } else {
+                      this.setDevourTick(t + 1);
+                  }
+              }
+
+              private void spawnBloodBurst(float yaw, int blockCount, int dustCount, double spread) {
+                  if (!(this.level() instanceof ServerLevel serverLevel)) return;
+                  double rad = Math.toRadians(yaw);
+                  double bx = this.getX() - Math.sin(rad) * 0.78D;
+                  double by = this.getY() + 1.55D;
+                  double bz = this.getZ() + Math.cos(rad) * 0.78D;
+
+                  BlockParticleOption redstoneBlood = new BlockParticleOption(
+                          ParticleTypes.BLOCK, Blocks.REDSTONE_BLOCK.defaultBlockState());
+                  DustParticleOptions crimsonMist = new DustParticleOptions(
+                          new Vector3f(0.72F, 0.02F, 0.02F), 1.65F);
+
+                  serverLevel.sendParticles(redstoneBlood, bx, by, bz, blockCount, spread, spread, spread, 0.16D);
+                  serverLevel.sendParticles(crimsonMist, bx, by, bz, dustCount, spread * 1.1D, spread * 1.1D, spread * 1.1D, 0.08D);
+              }
+
+              @Override
+              public void addAdditionalSaveData(CompoundTag tag) {
+                  super.addAdditionalSaveData(tag);
+                  tag.putBoolean("Bloody", this.isBloody());
+                  tag.putInt("BloodyTimer", this.bloodyTimer);
+              }
+
+              @Override
+              public void readAdditionalSaveData(CompoundTag tag) {
+                  super.readAdditionalSaveData(tag);
+                  this.setBloody(tag.getBoolean("Bloody"));
+                  this.bloodyTimer = tag.getInt("BloodyTimer");
+              }
+
+              @Override
+              protected SoundEvent getAmbientSound() {
+                  return SoundEvents.WITCH_AMBIENT;
+              }
+
+              @Override
+              protected SoundEvent getHurtSound(DamageSource source) {
+                  return SoundEvents.EVOKER_HURT;
+              }
+
+              @Override
+              protected SoundEvent getDeathSound() {
+                  return SoundEvents.EVOKER_DEATH;
+              }
+
+              @Override
+              public float getVoicePitch() {
+                  return 0.65F;
+              }
+
+              private static class DevourAttackGoal extends Goal {
+                  private final PennywiseEntity mob;
+                  private int repathTicks;
+
+                  public DevourAttackGoal(PennywiseEntity mob) {
+                      this.mob = mob;
+                      this.setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
+                  }
+
+                  @Override
+                  public boolean canUse() {
+                      if (this.mob.isDevouring()) return true;
+                      LivingEntity target = this.mob.getTarget();
+                      return target != null && target.isAlive();
+                  }
+
+                  @Override
+                  public boolean canContinueToUse() {
+                      if (this.mob.isDevouring()) return true;
+                      LivingEntity target = this.mob.getTarget();
+                      return target != null && target.isAlive();
+                  }
+
+                  @Override
+                  public void start() {
+                      this.repathTicks = 0;
+                  }
+
+                  @Override
+                  public void tick() {
+                      if (this.mob.isDevouring()) {
+                          this.mob.getNavigation().stop();
+                          return;
+                      }
+                      LivingEntity target = this.mob.getTarget();
+                      if (target == null) return;
+
+                      this.mob.getLookControl().setLookAt(target, 30.0F, 30.0F);
+                      double distSqr = this.mob.distanceToSqr(target);
+
+                      if (distSqr <= 2.35D * 2.35D && this.mob.devourCooldown <= 0 && this.mob.hasLineOfSight(target)) {
+                          this.mob.startDevour(target);
+                          return;
+                      }
+
+                      if (--this.repathTicks <= 0) {
+                          this.repathTicks = 6;
+                          this.mob.getNavigation().moveTo(target, 1.15D);
+                      }
+                  }
+              }
+          }
+          """)
+
+          # Client: PennywiseAnimations
+          write_file("src/main/java/com/pennywisemod/client/PennywiseAnimations.java", """\
+          package com.pennywisemod.client;
+
+          import net.minecraft.client.animation.AnimationChannel;
+          import net.minecraft.client.animation.AnimationDefinition;
+          import net.minecraft.client.animation.Keyframe;
+          import net.minecraft.client.animation.KeyframeAnimations;
+
+          public class PennywiseAnimations {
+
+              public static final AnimationDefinition IDLE = AnimationDefinition.Builder.withLength(2.4F)
+                      .looping()
+                      .addAnimation("torso", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(2.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.2F, KeyframeAnimations.degreeVec(6.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.4F, KeyframeAnimations.degreeVec(2.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("head", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, -4.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.2F, KeyframeAnimations.degreeVec(3.0F, 0.0F, 5.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.4F, KeyframeAnimations.degreeVec(0.0F, 0.0F, -4.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("right_arm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(-6.0F, 0.0F, 8.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.2F, KeyframeAnimations.degreeVec(-12.0F, 0.0F, 12.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.4F, KeyframeAnimations.degreeVec(-6.0F, 0.0F, 8.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("left_arm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(-6.0F, 0.0F, -8.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.2F, KeyframeAnimations.degreeVec(-12.0F, 0.0F, -12.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.4F, KeyframeAnimations.degreeVec(-6.0F, 0.0F, -8.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("right_forearm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(-10.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.2F, KeyframeAnimations.degreeVec(-16.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.4F, KeyframeAnimations.degreeVec(-10.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("left_forearm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(-10.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.2F, KeyframeAnimations.degreeVec(-16.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.4F, KeyframeAnimations.degreeVec(-10.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .build();
+
+              public static final AnimationDefinition DEVOUR = AnimationDefinition.Builder.withLength(6.75F)
+                      .addAnimation("body_root", new AnimationChannel(AnimationChannel.Targets.POSITION,
+                              new Keyframe(0.0F, KeyframeAnimations.posVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(0.35F, KeyframeAnimations.posVec(0.0F, -2.5F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.1F, KeyframeAnimations.posVec(0.0F, -2.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.2F, KeyframeAnimations.posVec(0.0F, -3.0F, -1.5F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(2.7F, KeyframeAnimations.posVec(0.0F, -1.5F, 0.5F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(3.2F, KeyframeAnimations.posVec(0.0F, -3.2F, -1.5F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(3.7F, KeyframeAnimations.posVec(0.0F, -1.5F, 0.5F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.posVec(0.0F, -3.5F, -2.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(4.85F, KeyframeAnimations.posVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.75F, KeyframeAnimations.posVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("torso", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(0.4F, KeyframeAnimations.degreeVec(24.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.1F, KeyframeAnimations.degreeVec(18.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.85F, KeyframeAnimations.degreeVec(6.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.25F, KeyframeAnimations.degreeVec(30.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(2.75F, KeyframeAnimations.degreeVec(10.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(3.25F, KeyframeAnimations.degreeVec(32.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(3.75F, KeyframeAnimations.degreeVec(8.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(36.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(-4.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(5.6F, KeyframeAnimations.degreeVec(2.0F, 0.0F, -4.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("head", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(0.4F, KeyframeAnimations.degreeVec(-10.0F, 0.0F, 5.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.1F, KeyframeAnimations.degreeVec(-18.0F, 0.0F, -6.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.85F, KeyframeAnimations.degreeVec(-24.0F, 0.0F, 5.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.25F, KeyframeAnimations.degreeVec(18.0F, 0.0F, -4.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(2.75F, KeyframeAnimations.degreeVec(-22.0F, 0.0F, 4.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(3.25F, KeyframeAnimations.degreeVec(20.0F, 0.0F, 5.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(3.75F, KeyframeAnimations.degreeVec(-24.0F, 0.0F, -5.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(24.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(4.9F, KeyframeAnimations.degreeVec(-5.0F, 0.0F, -10.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(5.65F, KeyframeAnimations.degreeVec(4.0F, -8.0F, 10.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.3F, KeyframeAnimations.degreeVec(0.0F, 0.0F, -4.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("upper_head", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(0.9F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.4F, KeyframeAnimations.degreeVec(-22.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.05F, KeyframeAnimations.degreeVec(-28.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(2.25F, KeyframeAnimations.degreeVec(-2.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(2.75F, KeyframeAnimations.degreeVec(-26.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(3.25F, KeyframeAnimations.degreeVec(-2.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(3.75F, KeyframeAnimations.degreeVec(-28.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR)
+                      ))
+                      .addAnimation("jaw", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(0.85F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.35F, KeyframeAnimations.degreeVec(56.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.05F, KeyframeAnimations.degreeVec(72.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(2.25F, KeyframeAnimations.degreeVec(8.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(2.75F, KeyframeAnimations.degreeVec(68.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(3.25F, KeyframeAnimations.degreeVec(8.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(3.75F, KeyframeAnimations.degreeVec(74.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(4.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR),
+                              new Keyframe(4.65F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.LINEAR)
+                      ))
+                      .addAnimation("right_arm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(0.35F, KeyframeAnimations.degreeVec(-72.0F, -18.0F, 12.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.1F, KeyframeAnimations.degreeVec(-92.0F, -26.0F, 8.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(2.25F, KeyframeAnimations.degreeVec(-100.0F, -30.0F, 5.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(-96.0F, -28.0F, 5.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(-40.0F, -10.0F, 18.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(5.25F, KeyframeAnimations.degreeVec(-118.0F, -32.0F, 10.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(5.65F, KeyframeAnimations.degreeVec(-112.0F, -12.0F, 14.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.05F, KeyframeAnimations.degreeVec(-116.0F, -30.0F, 10.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("right_forearm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(0.35F, KeyframeAnimations.degreeVec(-32.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.1F, KeyframeAnimations.degreeVec(-48.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(-50.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(-20.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(5.25F, KeyframeAnimations.degreeVec(-62.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(5.65F, KeyframeAnimations.degreeVec(-55.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.05F, KeyframeAnimations.degreeVec(-60.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("left_arm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(0.35F, KeyframeAnimations.degreeVec(-72.0F, 18.0F, -12.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.1F, KeyframeAnimations.degreeVec(-92.0F, 26.0F, -8.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(-96.0F, 28.0F, -5.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.9F, KeyframeAnimations.degreeVec(-14.0F, 5.0F, -14.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("left_forearm", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(0.35F, KeyframeAnimations.degreeVec(-32.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(1.1F, KeyframeAnimations.degreeVec(-48.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(-50.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.9F, KeyframeAnimations.degreeVec(-10.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("right_leg", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(0.4F, KeyframeAnimations.degreeVec(-18.0F, 0.0F, 6.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(-22.0F, 0.0F, 8.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("right_shin", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(0.4F, KeyframeAnimations.degreeVec(28.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(32.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("left_leg", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(0.4F, KeyframeAnimations.degreeVec(-18.0F, 0.0F, -6.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(-22.0F, 0.0F, -8.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .addAnimation("left_shin", new AnimationChannel(AnimationChannel.Targets.ROTATION,
+                              new Keyframe(0.0F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(0.4F, KeyframeAnimations.degreeVec(28.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.3F, KeyframeAnimations.degreeVec(32.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(4.85F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM),
+                              new Keyframe(6.75F, KeyframeAnimations.degreeVec(0.0F, 0.0F, 0.0F), AnimationChannel.Interpolations.CATMULLROM)
+                      ))
+                      .build();
+          }
+          """)
+
+          # Client: PennywiseModel
+          write_file("src/main/java/com/pennywisemod/client/PennywiseModel.java", """\
+          package com.pennywisemod.client;
+
+          import com.pennywisemod.PennywiseMod;
+          import com.pennywisemod.entity.PennywiseEntity;
+          import net.minecraft.client.model.HierarchicalModel;
+          import net.minecraft.client.model.geom.ModelLayerLocation;
+          import net.minecraft.client.model.geom.ModelPart;
+          import net.minecraft.client.model.geom.PartPose;
+          import net.minecraft.client.model.geom.builders.CubeDeformation;
+          import net.minecraft.client.model.geom.builders.CubeListBuilder;
+          import net.minecraft.client.model.geom.builders.LayerDefinition;
+          import net.minecraft.client.model.geom.builders.MeshDefinition;
+          import net.minecraft.client.model.geom.builders.PartDefinition;
+          import net.minecraft.resources.ResourceLocation;
+          import net.minecraft.util.Mth;
+
+          public class PennywiseModel extends HierarchicalModel<PennywiseEntity> {
+              public static final ModelLayerLocation LAYER_LOCATION =
+                      new ModelLayerLocation(new ResourceLocation(PennywiseMod.MOD_ID, "pennywise"), "main");
+
+              private final ModelPart root;
+              private final ModelPart torso;
+              private final ModelPart head;
+              private final ModelPart upperHead;
+              private final ModelPart upperTeeth;
+              private final ModelPart innerMouth;
+              private final ModelPart jaw;
+              private final ModelPart lowerTeeth;
+              private final ModelPart mawCheeks;
+              private final ModelPart rightArm;
+              private final ModelPart rightForearm;
+              private final ModelPart leftArm;
+              private final ModelPart leftForearm;
+              private final ModelPart rightLeg;
+              private final ModelPart rightShin;
+              private final ModelPart leftLeg;
+              private final ModelPart leftShin;
+
+              public PennywiseModel(ModelPart root) {
+                  this.root = root;
+                  ModelPart bodyRoot = root.getChild("body_root");
+                  ModelPart pelvis = bodyRoot.getChild("pelvis");
+                  this.torso = pelvis.getChild("torso");
+                  this.head = this.torso.getChild("head");
+                  this.upperHead = this.head.getChild("upper_head");
+                  this.upperTeeth = this.upperHead.getChild("upper_teeth");
+                  this.innerMouth = this.upperHead.getChild("inner_mouth");
+                  this.jaw = this.head.getChild("jaw");
+                  this.lowerTeeth = this.jaw.getChild("lower_teeth");
+                  this.mawCheeks = this.head.getChild("maw_cheeks");
+                  this.rightArm = this.torso.getChild("right_arm");
+                  this.rightForearm = this.rightArm.getChild("right_forearm");
+                  this.leftArm = this.torso.getChild("left_arm");
+                  this.leftForearm = this.leftArm.getChild("left_forearm");
+                  this.rightLeg = bodyRoot.getChild("right_leg");
+                  this.rightShin = this.rightLeg.getChild("right_shin");
+                  this.leftLeg = bodyRoot.getChild("left_leg");
+                  this.leftShin = this.leftLeg.getChild("left_shin");
+              }
+
+              public static LayerDefinition createBodyLayer() {
+                  MeshDefinition mesh = new MeshDefinition();
+                  PartDefinition root = mesh.getRoot();
+
+                  PartDefinition bodyRoot = root.addOrReplaceChild("body_root",
+                          CubeListBuilder.create(),
+                          PartPose.offset(0.0F, 24.0F, 0.0F));
+
+                  // Pelvis + Victorian pleated clown tunic skirt
+                  PartDefinition pelvis = bodyRoot.addOrReplaceChild("pelvis",
+                          CubeListBuilder.create()
+                                  .texOffs(0, 50).addBox(-4.5F, -4.0F, -2.5F, 9.0F, 4.0F, 5.0F)
+                                  .texOffs(30, 50).addBox(-4.5F, -0.5F, -3.5F, 9.0F, 4.0F, 1.0F)
+                                  .texOffs(30, 50).addBox(-4.5F, -0.5F, 2.5F, 9.0F, 4.0F, 1.0F)
+                                  .texOffs(52, 50).addBox(-5.2F, -0.5F, -3.0F, 1.0F, 4.0F, 6.0F)
+                                  .texOffs(52, 50).addBox(4.2F, -0.5F, -3.0F, 1.0F, 4.0F, 6.0F),
+                          PartPose.offset(0.0F, -14.0F, 0.0F));
+
+                  // Torso + 2 yellow-orange pom-poms + double Victorian neck ruffles
+                  PartDefinition torso = pelvis.addOrReplaceChild("torso",
+                          CubeListBuilder.create()
+                                  .texOffs(0, 32).addBox(-5.0F, -11.0F, -3.0F, 10.0F, 11.0F, 6.0F)
+                                  .texOffs(34, 32).addBox(-1.0F, -8.5F, -4.2F, 2.0F, 2.0F, 2.0F)
+                                  .texOffs(34, 32).addBox(-1.0F, -4.5F, -4.2F, 2.0F, 2.0F, 2.0F)
+                                  .texOffs(44, 24).addBox(-6.0F, -12.6F, -4.5F, 12.0F, 2.0F, 9.0F)
+                                  .texOffs(44, 36).addBox(-5.5F, -14.0F, -4.0F, 11.0F, 2.0F, 8.0F),
+                          PartPose.offset(0.0F, -4.0F, 0.0F));
+
+                  // Head root
+                  PartDefinition head = torso.addOrReplaceChild("head",
+                          CubeListBuilder.create(),
+                          PartPose.offset(0.0F, -13.5F, 0.0F));
+
+                  // Upper skull + high Pennywise forehead + red nose + wild red hair tufts
+                  PartDefinition upperHead = head.addOrReplaceChild("upper_head",
+                          CubeListBuilder.create()
+                                  .texOffs(0, 0).addBox(-4.5F, -8.0F, -6.5F, 9.0F, 8.0F, 9.0F)
+                                  .texOffs(36, 0).addBox(-4.0F, -9.5F, -6.0F, 8.0F, 2.0F, 8.0F)
+                                  .texOffs(36, 10).addBox(-1.0F, -3.2F, -7.8F, 2.0F, 2.0F, 2.0F)
+                                  .texOffs(74, 0).addBox(-7.8F, -8.2F, -5.2F, 4.0F, 7.0F, 8.0F)
+                                  .texOffs(74, 0).addBox(3.8F, -8.2F, -5.2F, 4.0F, 7.0F, 8.0F)
+                                  .texOffs(86, 20).addBox(-8.6F, -7.2F, -4.2F, 2.0F, 5.0F, 6.0F)
+                                  .texOffs(86, 20).addBox(6.6F, -7.2F, -4.2F, 2.0F, 5.0F, 6.0F)
+                                  .texOffs(98, 0).addBox(-3.5F, -11.2F, -4.0F, 7.0F, 3.0F, 6.0F)
+                                  .texOffs(98, 9).addBox(-5.0F, -8.5F, 1.5F, 10.0F, 7.0F, 3.0F),
+                          PartPose.offset(0.0F, -2.5F, 2.0F));
+
+                  // Upper razor-sharp teeth row (visible when jaw unhinges!)
+                  CubeListBuilder upperTeethBuilder = CubeListBuilder.create();
+                  for (int i = 0; i < 6; i++) {
+                      float tx = -3.7F + i * 1.28F;
+                      upperTeethBuilder.texOffs(36, 14).addBox(tx, -0.3F, -6.1F, 1.0F, 2.0F, 1.0F, new CubeDeformation(-0.12F));
+                      upperTeethBuilder.texOffs(36, 14).addBox(tx, -0.5F, -4.6F, 1.0F, 2.0F, 1.0F, new CubeDeformation(-0.16F));
+                  }
+                  upperHead.addOrReplaceChild("upper_teeth", upperTeethBuilder, PartPose.ZERO);
+
+                  // Dark inner mouth cavity ceiling
+                  upperHead.addOrReplaceChild("inner_mouth",
+                          CubeListBuilder.create()
+                                  .texOffs(44, 10).addBox(-4.0F, -1.6F, -5.8F, 8.0F, 2.0F, 7.0F),
+                          PartPose.ZERO);
+
+                  // Articulated unhinging lower jaw
+                  PartDefinition jaw = head.addOrReplaceChild("jaw",
+                          CubeListBuilder.create()
+                                  .texOffs(0, 19).addBox(-4.5F, 0.0F, -6.5F, 9.0F, 3.0F, 9.0F),
+                          PartPose.offset(0.0F, -2.5F, 2.0F));
+
+                  // Lower razor-sharp teeth row
+                  CubeListBuilder lowerTeethBuilder = CubeListBuilder.create();
+                  for (int i = 0; i < 6; i++) {
+                      float tx = -3.7F + i * 1.28F;
+                      lowerTeethBuilder.texOffs(36, 14).addBox(tx, -1.7F, -6.1F, 1.0F, 2.0F, 1.0F, new CubeDeformation(-0.12F));
+                      lowerTeethBuilder.texOffs(36, 14).addBox(tx, -1.5F, -4.6F, 1.0F, 2.0F, 1.0F, new CubeDeformation(-0.16F));
+                  }
+                  jaw.addOrReplaceChild("lower_teeth", lowerTeethBuilder, PartPose.ZERO);
+
+                  // Stretched dark-red fleshy maw sides + throat back when mouth opens wide
+                  head.addOrReplaceChild("maw_cheeks",
+                          CubeListBuilder.create()
+                                  .texOffs(86, 36).addBox(-4.2F, -1.0F, -3.5F, 1.0F, 4.0F, 5.0F)
+                                  .texOffs(86, 36).addBox(3.2F, -1.0F, -3.5F, 1.0F, 4.0F, 5.0F)
+                                  .texOffs(100, 36).addBox(-4.0F, -1.0F, 1.0F, 8.0F, 4.0F, 1.0F),
+                          PartPose.offset(0.0F, -2.5F, 0.0F));
+
+                  // Right Arm (puffed Victorian shoulder + ruffled cuff + clawed hand)
+                  PartDefinition rightArm = torso.addOrReplaceChild("right_arm",
+                          CubeListBuilder.create()
+                                  .texOffs(0, 64).addBox(-4.5F, -1.5F, -3.0F, 5.0F, 6.0F, 6.0F),
+                          PartPose.offset(-5.5F, -9.8F, 0.0F));
+
+                  rightArm.addOrReplaceChild("right_forearm",
+                          CubeListBuilder.create()
+                                  .texOffs(24, 64).addBox(-2.0F, 0.0F, -2.0F, 4.0F, 6.0F, 4.0F)
+                                  .texOffs(42, 64).addBox(-2.5F, 5.0F, -2.5F, 5.0F, 2.0F, 5.0F)
+                                  .texOffs(64, 64).addBox(-2.0F, 6.8F, -2.0F, 4.0F, 4.0F, 4.0F),
+                          PartPose.offset(-2.0F, 4.5F, 0.0F));
+
+                  // Left Arm
+                  PartDefinition leftArm = torso.addOrReplaceChild("left_arm",
+                          CubeListBuilder.create()
+                                  .texOffs(0, 64).mirror().addBox(-0.5F, -1.5F, -3.0F, 5.0F, 6.0F, 6.0F),
+                          PartPose.offset(5.5F, -9.8F, 0.0F));
+
+                  leftArm.addOrReplaceChild("left_forearm",
+                          CubeListBuilder.create()
+                                  .texOffs(24, 64).mirror().addBox(-2.0F, 0.0F, -2.0F, 4.0F, 6.0F, 4.0F)
+                                  .texOffs(42, 64).mirror().addBox(-2.5F, 5.0F, -2.5F, 5.0F, 2.0F, 5.0F)
+                                  .texOffs(64, 64).mirror().addBox(-2.0F, 6.8F, -2.0F, 4.0F, 4.0F, 4.0F),
+                          PartPose.offset(2.0F, 4.5F, 0.0F));
+
+                  // Right Leg (puffed trouser thigh + shin + dark Victorian clown shoe)
+                  PartDefinition rightLeg = bodyRoot.addOrReplaceChild("right_leg",
+                          CubeListBuilder.create()
+                                  .texOffs(0, 80).addBox(-2.5F, 0.0F, -2.5F, 5.0F, 7.0F, 5.0F),
+                          PartPose.offset(-2.6F, -14.0F, 0.0F));
+
+                  rightLeg.addOrReplaceChild("right_shin",
+                          CubeListBuilder.create()
+                                  .texOffs(22, 80).addBox(-2.0F, 0.0F, -2.0F, 4.0F, 5.0F, 4.0F)
+                                  .texOffs(40, 80).addBox(-2.0F, 5.0F, -4.0F, 4.0F, 2.0F, 6.0F),
+                          PartPose.offset(0.0F, 7.0F, 0.0F));
+
+                  // Left Leg
+                  PartDefinition leftLeg = bodyRoot.addOrReplaceChild("left_leg",
+                          CubeListBuilder.create()
+                                  .texOffs(0, 80).mirror().addBox(-2.5F, 0.0F, -2.5F, 5.0F, 7.0F, 5.0F),
+                          PartPose.offset(2.6F, -14.0F, 0.0F));
+
+                  leftLeg.addOrReplaceChild("left_shin",
+                          CubeListBuilder.create()
+                                  .texOffs(22, 80).mirror().addBox(-2.0F, 0.0F, -2.0F, 4.0F, 5.0F, 4.0F)
+                                  .texOffs(40, 80).mirror().addBox(-2.0F, 5.0F, -4.0F, 4.0F, 2.0F, 6.0F),
+                          PartPose.offset(0.0F, 7.0F, 0.0F));
+
+                  return LayerDefinition.create(mesh, 128, 128);
+              }
+
+              @Override
+              public ModelPart root() {
+                  return this.root;
+              }
+
+              @Override
+              public void setupAnim(PennywiseEntity entity, float limbSwing, float limbSwingAmount,
+                                    float ageInTicks, float netHeadYaw, float headPitch) {
+                  this.root().getAllParts().forEach(ModelPart::resetPose);
+
+                  if (entity.isDevouring()) {
+                      this.animate(entity.devourAnimationState, PennywiseAnimations.DEVOUR, ageInTicks, 1.0F);
+                  } else {
+                      this.head.yRot += Mth.clamp(netHeadYaw, -45.0F, 45.0F) * ((float) Math.PI / 180.0F);
+                      this.head.xRot += Mth.clamp(headPitch, -25.0F, 25.0F) * ((float) Math.PI / 180.0F);
+
+                      // Menacing stalking walk cycle
+                      this.rightLeg.xRot += Mth.cos(limbSwing * 0.6662F) * 0.9F * limbSwingAmount;
+                      this.leftLeg.xRot += Mth.cos(limbSwing * 0.6662F + (float) Math.PI) * 0.9F * limbSwingAmount;
+                      this.rightShin.xRot += Math.max(0.0F, Mth.sin(limbSwing * 0.6662F)) * 0.55F * limbSwingAmount;
+                      this.leftShin.xRot += Math.max(0.0F, Mth.sin(limbSwing * 0.6662F + (float) Math.PI)) * 0.55F * limbSwingAmount;
+                      this.rightArm.xRot += Mth.cos(limbSwing * 0.6662F + (float) Math.PI) * 0.75F * limbSwingAmount;
+                      this.leftArm.xRot += Mth.cos(limbSwing * 0.6662F) * 0.75F * limbSwingAmount;
+                      this.rightForearm.xRot -= 0.25F * limbSwingAmount;
+                      this.leftForearm.xRot -= 0.25F * limbSwingAmount;
+                      this.torso.xRot += 0.16F * limbSwingAmount;
+
+                      this.animate(entity.idleAnimationState, PennywiseAnimations.IDLE, ageInTicks, 1.0F);
+                  }
+
+                  boolean mouthOpen = this.jaw.xRot > 0.12F;
+                  this.upperTeeth.visible = mouthOpen;
+                  this.lowerTeeth.visible = mouthOpen;
+                  this.innerMouth.visible = mouthOpen;
+                  this.mawCheeks.visible = mouthOpen;
+                  if (mouthOpen) {
+                      this.mawCheeks.yScale = Mth.clamp(this.jaw.xRot * 1.45F, 0.35F, 1.85F);
+                  }
+              }
+          }
+          """)
+
+          # Client: PennywiseRenderer
+          write_file("src/main/java/com/pennywisemod/client/PennywiseRenderer.java", """\
+          package com.pennywisemod.client;
+
+          import com.mojang.blaze3d.vertex.PoseStack;
+          import com.pennywisemod.PennywiseMod;
+          import com.pennywisemod.entity.PennywiseEntity;
+          import net.minecraft.client.renderer.entity.EntityRendererProvider;
+          import net.minecraft.client.renderer.entity.MobRenderer;
+          import net.minecraft.resources.ResourceLocation;
+
+          public class PennywiseRenderer extends MobRenderer<PennywiseEntity, PennywiseModel> {
+              private static final ResourceLocation CLEAN_TEXTURE =
+                      new ResourceLocation(PennywiseMod.MOD_ID, "textures/entity/pennywise.png");
+              private static final ResourceLocation BLOODY_TEXTURE =
+                      new ResourceLocation(PennywiseMod.MOD_ID, "textures/entity/pennywise_bloody.png");
+
+              public PennywiseRenderer(EntityRendererProvider.Context context) {
+                  super(context, new PennywiseModel(context.bakeLayer(PennywiseModel.LAYER_LOCATION)), 0.75F);
+              }
+
+              @Override
+              public ResourceLocation getTextureLocation(PennywiseEntity entity) {
+                  return entity.isBloody() ? BLOODY_TEXTURE : CLEAN_TEXTURE;
+              }
+
+              @Override
+              protected void scale(PennywiseEntity entity, PoseStack poseStack, float partialTickTime) {
+                  poseStack.scale(1.06F, 1.06F, 1.06F);
+                  super.scale(entity, poseStack, partialTickTime);
+              }
+          }
+          """)
+
+          # Client: VictimRenderer
+          write_file("src/main/java/com/pennywisemod/client/VictimRenderer.java", """\
+          package com.pennywisemod.client;
+
+          import com.pennywisemod.PennywiseMod;
+          import com.pennywisemod.entity.VictimEntity;
+          import net.minecraft.client.model.HumanoidModel;
+          import net.minecraft.client.model.geom.ModelLayers;
+          import net.minecraft.client.renderer.entity.EntityRendererProvider;
+          import net.minecraft.client.renderer.entity.HumanoidMobRenderer;
+          import net.minecraft.resources.ResourceLocation;
+
+          public class VictimRenderer extends HumanoidMobRenderer<VictimEntity, HumanoidModel<VictimEntity>> {
+              private static final ResourceLocation TEXTURE =
+                      new ResourceLocation(PennywiseMod.MOD_ID, "textures/entity/victim.png");
+
+              public VictimRenderer(EntityRendererProvider.Context context) {
+                  super(context, new HumanoidModel<>(context.bakeLayer(ModelLayers.PLAYER)), 0.5F);
+              }
+
+              @Override
+              public ResourceLocation getTextureLocation(VictimEntity entity) {
+                  return TEXTURE;
+              }
+          }
+          """)
+
+          # Client: ClientEvents
+          write_file("src/main/java/com/pennywisemod/client/ClientEvents.java", """\
+          package com.pennywisemod.client;
+
+          import com.pennywisemod.PennywiseMod;
+          import com.pennywisemod.registry.ModEntities;
+          import net.minecraftforge.api.distmarker.Dist;
+          import net.minecraftforge.client.event.EntityRenderersEvent;
+          import net.minecraftforge.eventbus.api.SubscribeEvent;
+          import net.minecraftforge.fml.common.Mod;
+
+          @Mod.EventBusSubscriber(modid = PennywiseMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
+          public class ClientEvents {
+
+              @SubscribeEvent
+              public static void registerLayerDefinitions(EntityRenderersEvent.RegisterLayerDefinitions event) {
+                  event.registerLayerDefinition(PennywiseModel.LAYER_LOCATION, PennywiseModel::createBodyLayer);
+              }
+
+              @SubscribeEvent
+              public static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
+                  event.registerEntityRenderer(ModEntities.PENNYWISE.get(), PennywiseRenderer::new);
+                  event.registerEntityRenderer(ModEntities.VICTIM.get(), VictimRenderer::new);
+              }
+          }
+          """)
+
+          print("Projeto Pennywise 1.20.1 Forge gerado com sucesso!")
+          PYEOF
+
+      - name: Compilar Mod (.jar)
+        run: gradle build --no-daemon --stacktrace
+
+      - name: Salvar arquivo .jar pronto para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: pennywisemod-1.20.1-forge
+          path: build/libs/*.jar
